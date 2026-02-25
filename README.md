@@ -36,6 +36,8 @@ brew install --cask airlock-hq/airlock/airlock
 
 macOS only for now. More platforms coming soon.
 
+Documentation: [https://airlockhq.com/docs](https://airlockhq.com/docs).
+
 ## Quick Start
 
 ```bash
