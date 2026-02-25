@@ -923,6 +923,20 @@ pub async fn handle_apply_patches(
             Ok(()) => {
                 applied_count += 1;
                 applied_titles.push(title);
+
+                // Move applied patch to patches/applied/ so it shows as applied in the UI
+                let patch_file = std::path::Path::new(patch_path);
+                if let Some(patches_dir) = patch_file.parent() {
+                    let applied_dir = patches_dir.join("applied");
+                    if let Err(e) = std::fs::create_dir_all(&applied_dir) {
+                        warn!("Failed to create patches/applied/ directory: {}", e);
+                    } else if let Some(filename) = patch_file.file_name() {
+                        let dest = applied_dir.join(filename);
+                        if let Err(e) = std::fs::rename(patch_file, &dest) {
+                            warn!("Failed to move applied patch to {:?}: {}", dest, e);
+                        }
+                    }
+                }
             }
             Err(e) => {
                 patch_errors.push(PatchError {
@@ -1761,6 +1775,17 @@ mod tests {
             "Commit message should contain 'Airlock: applied patches', got: {}",
             log
         );
+
+        // Verify the patch was moved to patches/applied/
+        assert!(
+            !patch_path.exists(),
+            "Original patch file should have been moved"
+        );
+        let applied_path = patches_dir.join("applied").join("patch1.json");
+        assert!(
+            applied_path.exists(),
+            "Patch should have been moved to patches/applied/"
+        );
     }
 
     #[tokio::test]
@@ -1926,6 +1951,22 @@ mod tests {
         assert!(result.patch_errors[0]
             .error
             .contains("missing 'diff' field"));
+
+        // Good patch should be moved to patches/applied/
+        assert!(
+            !good_path.exists(),
+            "Successfully applied patch should have been moved"
+        );
+        assert!(
+            patches_dir.join("applied").join("good.json").exists(),
+            "Successfully applied patch should be in patches/applied/"
+        );
+
+        // Bad patch should remain in place (it was never applied)
+        assert!(
+            bad_path.exists(),
+            "Failed patch should remain in original location"
+        );
     }
 
     #[tokio::test]

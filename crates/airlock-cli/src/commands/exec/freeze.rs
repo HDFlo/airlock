@@ -60,6 +60,15 @@ pub async fn freeze() -> Result<()> {
 
     info!("Found {} patches to apply", patches.len());
 
+    // Create applied directory for moving patches after successful apply
+    let applied_dir = patches_dir.join("applied");
+    std::fs::create_dir_all(&applied_dir).with_context(|| {
+        format!(
+            "Failed to create applied patches directory: {:?}",
+            applied_dir
+        )
+    })?;
+
     // Apply each patch
     let mut applied_titles = Vec::new();
     for (path, patch) in &patches {
@@ -72,6 +81,15 @@ pub async fn freeze() -> Result<()> {
 
         apply_patch(&worktree_path, &patch.diff)
             .with_context(|| format!("Failed to apply patch '{}' from {:?}", patch.title, path))?;
+
+        // Move applied patch to patches/applied/
+        if let Some(filename) = path.file_name() {
+            let dest = applied_dir.join(filename);
+            std::fs::rename(path, &dest).with_context(|| {
+                format!("Failed to move applied patch {:?} to {:?}", path, dest)
+            })?;
+            debug!("Moved applied patch to {:?}", dest);
+        }
 
         applied_titles.push(patch.title.clone());
         info!("Applied patch: {}", patch.title);

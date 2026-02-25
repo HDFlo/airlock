@@ -4,6 +4,70 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 // =============================================================================
+// Approval Mode
+// =============================================================================
+
+/// Controls when a step pauses for user approval.
+///
+/// In YAML, this is specified as:
+/// - `false` or omitted → `Never` (default)
+/// - `true` → `Always`
+/// - `"if_patches"` → `IfPatches` (pause only when unapplied patches exist)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ApprovalMode {
+    /// Never pause for approval (default).
+    #[default]
+    Never,
+    /// Always pause for approval after the step completes.
+    Always,
+    /// Pause only when there are pending (unapplied) patches.
+    IfPatches,
+}
+
+impl Serialize for ApprovalMode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            ApprovalMode::Never => serializer.serialize_bool(false),
+            ApprovalMode::Always => serializer.serialize_bool(true),
+            ApprovalMode::IfPatches => serializer.serialize_str("if_patches"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ApprovalMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ApprovalModeVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for ApprovalModeVisitor {
+            type Value = ApprovalMode;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a boolean or the string \"if_patches\"")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(if v {
+                    ApprovalMode::Always
+                } else {
+                    ApprovalMode::Never
+                })
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                match v {
+                    "if_patches" => Ok(ApprovalMode::IfPatches),
+                    "true" => Ok(ApprovalMode::Always),
+                    "false" => Ok(ApprovalMode::Never),
+                    other => Err(E::unknown_variant(other, &["true", "false", "if_patches"])),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(ApprovalModeVisitor)
+    }
+}
+
+// =============================================================================
 // Step-Based Pipeline Types
 // =============================================================================
 
@@ -95,9 +159,10 @@ pub struct StepDefinition {
     #[serde(default, rename = "continue-on-error")]
     pub continue_on_error: bool,
 
-    /// Pause for user approval after this step completes. Defaults to false.
+    /// Pause for user approval after this step completes.
+    /// Accepts `false` (never), `true` (always), or `"if_patches"` (only when patches pending).
     #[serde(default, rename = "require-approval")]
-    pub require_approval: bool,
+    pub require_approval: ApprovalMode,
 
     /// Maximum execution time for this step in seconds.
     /// When omitted, the executor applies a default timeout (60 minutes).

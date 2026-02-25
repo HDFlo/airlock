@@ -309,7 +309,10 @@ jobs:
             Some("airlock-hq/airlock/defaults/lint@main".to_string())
         );
         assert!(default_job.steps[3].continue_on_error);
-        assert!(default_job.steps[4].require_approval);
+        assert_eq!(
+            default_job.steps[4].require_approval,
+            crate::types::ApprovalMode::Always
+        );
     }
 
     #[test]

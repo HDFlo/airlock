@@ -4,8 +4,8 @@
 use super::helpers::*;
 use airlock_core::{
     branch_matches_trigger, filter_workflows_for_branch, parse_workflow_config, validate_job_dag,
-    DagValidationError, JobConfig, JobStatus, OneOrMany, PushTrigger, StepStatus, TriggerConfig,
-    WorkflowConfig,
+    ApprovalMode, DagValidationError, JobConfig, JobStatus, OneOrMany, PushTrigger, StepStatus,
+    TriggerConfig, WorkflowConfig,
 };
 use indexmap::IndexMap;
 
@@ -43,7 +43,7 @@ jobs:
     assert_eq!(default_job.name, Some("Lint, Test & Deploy".to_string()));
     assert_eq!(default_job.steps.len(), 3);
     assert!(default_job.steps[1].continue_on_error);
-    assert!(default_job.steps[2].require_approval);
+    assert_eq!(default_job.steps[2].require_approval, ApprovalMode::Always);
 }
 
 #[test]

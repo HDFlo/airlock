@@ -1,6 +1,57 @@
 use super::*;
 
 // =========================================================================
+// ApprovalMode Tests
+// =========================================================================
+
+#[test]
+fn test_approval_mode_serde_json_false() {
+    let mode: ApprovalMode = serde_json::from_str("false").unwrap();
+    assert_eq!(mode, ApprovalMode::Never);
+    let json = serde_json::to_string(&mode).unwrap();
+    assert_eq!(json, "false");
+}
+
+#[test]
+fn test_approval_mode_serde_json_true() {
+    let mode: ApprovalMode = serde_json::from_str("true").unwrap();
+    assert_eq!(mode, ApprovalMode::Always);
+    let json = serde_json::to_string(&mode).unwrap();
+    assert_eq!(json, "true");
+}
+
+#[test]
+fn test_approval_mode_serde_json_if_patches() {
+    let mode: ApprovalMode = serde_json::from_str("\"if_patches\"").unwrap();
+    assert_eq!(mode, ApprovalMode::IfPatches);
+    let json = serde_json::to_string(&mode).unwrap();
+    assert_eq!(json, "\"if_patches\"");
+}
+
+#[test]
+fn test_approval_mode_serde_yaml_false() {
+    let mode: ApprovalMode = serde_yaml::from_str("false").unwrap();
+    assert_eq!(mode, ApprovalMode::Never);
+}
+
+#[test]
+fn test_approval_mode_serde_yaml_true() {
+    let mode: ApprovalMode = serde_yaml::from_str("true").unwrap();
+    assert_eq!(mode, ApprovalMode::Always);
+}
+
+#[test]
+fn test_approval_mode_serde_yaml_if_patches() {
+    let mode: ApprovalMode = serde_yaml::from_str("if_patches").unwrap();
+    assert_eq!(mode, ApprovalMode::IfPatches);
+}
+
+#[test]
+fn test_approval_mode_default() {
+    assert_eq!(ApprovalMode::default(), ApprovalMode::Never);
+}
+
+// =========================================================================
 // StepStatus Tests
 // =========================================================================
 
@@ -47,7 +98,7 @@ fn test_step_definition_serialization_and_defaults() {
         uses: None,
         shell: Some("bash".to_string()),
         continue_on_error: true,
-        require_approval: false,
+        require_approval: ApprovalMode::Never,
         timeout: None,
     };
 
@@ -57,7 +108,7 @@ fn test_step_definition_serialization_and_defaults() {
     assert_eq!(parsed.run, Some("npm test".to_string()));
     assert_eq!(parsed.shell, Some("bash".to_string()));
     assert!(parsed.continue_on_error);
-    assert!(!parsed.require_approval);
+    assert_eq!(parsed.require_approval, ApprovalMode::Never);
 
     // Defaults applied when fields are missing
     let minimal: StepDefinition =
@@ -65,7 +116,7 @@ fn test_step_definition_serialization_and_defaults() {
     assert_eq!(minimal.name, "build");
     assert_eq!(minimal.shell, None);
     assert!(!minimal.continue_on_error);
-    assert!(!minimal.require_approval);
+    assert_eq!(minimal.require_approval, ApprovalMode::Never);
 
     // Reusable action reference (uses instead of run)
     let reusable: StepDefinition = serde_json::from_str(
@@ -89,7 +140,7 @@ fn test_step_definition_effective_run() {
         uses: None,
         shell: None,
         continue_on_error: false,
-        require_approval: false,
+        require_approval: ApprovalMode::Never,
         timeout: None,
     };
     assert_eq!(step.effective_run(), Some("npm test"));
@@ -101,7 +152,7 @@ fn test_step_definition_effective_run() {
         uses: Some("owner/repo/lint@v1".to_string()),
         shell: None,
         continue_on_error: false,
-        require_approval: false,
+        require_approval: ApprovalMode::Never,
         timeout: None,
     };
     assert_eq!(step.effective_run(), None);

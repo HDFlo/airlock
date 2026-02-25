@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { readArtifact, applyPatches, type ArtifactInfo, type StepResultInfo } from '@/hooks/use-daemon';
+import { readArtifact, applyPatches, type ArtifactInfo } from '@/hooks/use-daemon';
 import { Loader2, FileCode, Check, ChevronDown, ChevronRight, CheckCircle2, Layers, AlertCircle } from 'lucide-react';
 import { Button } from '@airlock-hq/design-system/react';
 import { cn } from '@/lib/utils';
@@ -16,7 +16,6 @@ interface PatchArtifact {
 
 interface PatchesTabProps {
   artifacts: ArtifactInfo[];
-  stepResults: StepResultInfo[];
   runId: string;
   onPatchesApplied?: () => void;
 }
@@ -26,7 +25,7 @@ interface PatchesTabProps {
  * Users can review, select, and apply patches.
  * Patches committed during freeze are shown as "applied"; later patches are "pending".
  */
-export function PatchesTab({ artifacts, stepResults, runId, onPatchesApplied }: PatchesTabProps) {
+export function PatchesTab({ artifacts, runId, onPatchesApplied }: PatchesTabProps) {
   const [patches, setPatches] = useState<PatchArtifact[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPatches, setSelectedPatches] = useState<Set<string>>(new Set());
@@ -34,13 +33,7 @@ export function PatchesTab({ artifacts, stepResults, runId, onPatchesApplied }: 
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
 
-  // Derive freeze completed_at from step results
-  const freezeCompletedAt = useMemo(() => {
-    const freezeStep = stepResults.find((s) => s.step === 'freeze' && s.status === 'passed');
-    return freezeStep?.completed_at ?? null;
-  }, [stepResults]);
-
-  // Filter for patch artifacts
+  // Filter for patch artifacts (both pending and applied)
   const patchFiles = useMemo(
     () =>
       artifacts.filter((a) => a.artifact_type === 'file' && a.path.includes('/patches/') && a.path.endsWith('.json')),
@@ -63,7 +56,7 @@ export function PatchesTab({ artifacts, stepResults, runId, onPatchesApplied }: 
           if (!result.is_binary) {
             const parsed = JSON.parse(result.content);
             const id = file.name.replace('.json', '');
-            const applied = freezeCompletedAt != null && file.created_at <= freezeCompletedAt;
+            const applied = file.path.includes('/patches/applied/');
             loaded.push({
               id,
               title: parsed.title || 'Untitled Patch',
@@ -85,7 +78,7 @@ export function PatchesTab({ artifacts, stepResults, runId, onPatchesApplied }: 
     }
 
     loadPatches();
-  }, [patchFiles, freezeCompletedAt]);
+  }, [patchFiles]);
 
   const appliedPatches = useMemo(() => patches.filter((p) => p.applied), [patches]);
   const pendingPatches = useMemo(() => patches.filter((p) => !p.applied), [patches]);

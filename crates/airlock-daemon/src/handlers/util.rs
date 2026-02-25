@@ -79,8 +79,18 @@ pub fn load_artifacts(paths: &AirlockPaths, repo_id: &str, run_id: &str) -> Vec<
                 // - patches/  → suggested code changes (JSON)
                 // Skip logs/ directory
                 match name.as_str() {
-                    "content" | "comments" | "patches" => {
+                    "content" | "comments" => {
                         artifacts.extend(load_subdirectory_artifacts(&path, &name));
+                    }
+                    "patches" => {
+                        artifacts.extend(load_subdirectory_artifacts(&path, &name));
+                        let applied_dir = path.join("applied");
+                        if applied_dir.exists() {
+                            artifacts.extend(load_subdirectory_artifacts(
+                                &applied_dir,
+                                "patches/applied",
+                            ));
+                        }
                     }
                     _ => {} // Skip logs/ and any other directories
                 }
@@ -283,5 +293,54 @@ mod tests {
                 artifact.name
             );
         }
+    }
+
+    #[test]
+    fn test_load_artifacts_includes_applied_patches() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = AirlockPaths::with_root(temp_dir.path().to_path_buf());
+
+        let artifact_dir = paths.run_artifacts("repo-1", "run-1");
+        std::fs::create_dir_all(&artifact_dir).unwrap();
+
+        // Create patches/ with a pending patch
+        let patches_dir = artifact_dir.join("patches");
+        std::fs::create_dir_all(&patches_dir).unwrap();
+        std::fs::write(
+            patches_dir.join("pending.json"),
+            r#"{"title": "Pending fix", "diff": "..."}"#,
+        )
+        .unwrap();
+
+        // Create patches/applied/ with an applied patch
+        let applied_dir = patches_dir.join("applied");
+        std::fs::create_dir_all(&applied_dir).unwrap();
+        std::fs::write(
+            applied_dir.join("applied.json"),
+            r#"{"title": "Applied fix", "diff": "..."}"#,
+        )
+        .unwrap();
+
+        let artifacts = load_artifacts(&paths, "repo-1", "run-1");
+
+        // Should have 2 artifacts: pending + applied
+        assert_eq!(artifacts.len(), 2);
+
+        let names: Vec<&str> = artifacts.iter().map(|a| a.name.as_str()).collect();
+        assert!(names.contains(&"pending.json"));
+        assert!(names.contains(&"applied.json"));
+
+        // Check paths distinguish pending vs applied
+        let pending = artifacts.iter().find(|a| a.name == "pending.json").unwrap();
+        assert!(
+            pending.path.contains("/patches/") && !pending.path.contains("/patches/applied/"),
+            "pending patch should be in patches/ not patches/applied/"
+        );
+
+        let applied = artifacts.iter().find(|a| a.name == "applied.json").unwrap();
+        assert!(
+            applied.path.contains("/patches/applied/"),
+            "applied patch should be in patches/applied/"
+        );
     }
 }

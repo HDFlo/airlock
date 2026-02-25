@@ -24,7 +24,7 @@
 //! Each reusable step must contain a `step.yml` file (or `action.yml`/`stage.yaml` as legacy
 //! fallback) with the step definition.
 
-use airlock_core::{AirlockPaths, StepDefinition};
+use airlock_core::{AirlockPaths, ApprovalMode, StepDefinition};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -101,7 +101,7 @@ pub struct StageYaml {
     pub continue_on_error: bool,
     /// Pause for user approval after this step completes.
     #[serde(default, alias = "require_approval", rename = "require-approval")]
-    pub require_approval: bool,
+    pub require_approval: ApprovalMode,
     /// Maximum execution time in seconds.
     /// When omitted, the executor applies a default timeout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -243,7 +243,11 @@ impl StageLoader {
             // Inline shell overrides if explicitly set, otherwise use step.yml's shell
             shell: stage.shell.clone().or_else(|| stage_yaml.shell.clone()),
             continue_on_error: stage.continue_on_error || stage_yaml.continue_on_error,
-            require_approval: stage.require_approval || stage_yaml.require_approval,
+            require_approval: if stage.require_approval != ApprovalMode::Never {
+                stage.require_approval
+            } else {
+                stage_yaml.require_approval
+            },
             timeout: stage.timeout.or(stage_yaml.timeout),
         };
 
@@ -779,7 +783,7 @@ description: Run ESLint
         assert_eq!(stage_yaml.run, "npm run lint");
         assert_eq!(stage_yaml.shell, Some("bash".to_string()));
         assert!(stage_yaml.continue_on_error);
-        assert!(stage_yaml.require_approval);
+        assert_eq!(stage_yaml.require_approval, ApprovalMode::Always);
         assert_eq!(stage_yaml.description, Some("Run ESLint".to_string()));
     }
 
@@ -797,7 +801,7 @@ description: Run ESLint
         assert_eq!(stage_yaml.run, "npm run lint");
         assert_eq!(stage_yaml.shell, Some("bash".to_string()));
         assert!(stage_yaml.continue_on_error);
-        assert!(!stage_yaml.require_approval);
+        assert_eq!(stage_yaml.require_approval, ApprovalMode::Never);
         assert_eq!(stage_yaml.description, Some("Run ESLint".to_string()));
     }
 
@@ -809,7 +813,17 @@ description: Run ESLint
         assert_eq!(stage_yaml.run, "echo hello");
         assert_eq!(stage_yaml.shell, None);
         assert!(!stage_yaml.continue_on_error);
-        assert!(!stage_yaml.require_approval);
+        assert_eq!(stage_yaml.require_approval, ApprovalMode::Never);
+    }
+
+    #[test]
+    fn test_action_yml_parsing_if_patches() {
+        let yaml = r#"
+run: airlock exec push
+require-approval: if_patches
+"#;
+        let stage_yaml: StageYaml = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(stage_yaml.require_approval, ApprovalMode::IfPatches);
     }
 
     #[test]
@@ -874,7 +888,7 @@ continue-on-error: true
             uses: Some("owner/repo/defaults/lint@v1".to_string()),
             shell: None,
             continue_on_error: false,
-            require_approval: false,
+            require_approval: ApprovalMode::Never,
             timeout: None,
         };
 
@@ -913,7 +927,7 @@ continue_on_error: true
             uses: Some("owner/repo/defaults/lint@v1".to_string()),
             shell: None,
             continue_on_error: false,
-            require_approval: false,
+            require_approval: ApprovalMode::Never,
             timeout: None,
         };
 
@@ -957,7 +971,7 @@ continue_on_error: true
             uses: Some("owner/repo/defaults/lint@v1".to_string()),
             shell: None,
             continue_on_error: false,
-            require_approval: false,
+            require_approval: ApprovalMode::Never,
             timeout: None,
         };
 
@@ -993,7 +1007,7 @@ shell: bash
             uses: Some("owner/repo/defaults/lint@v1".to_string()),
             shell: Some("zsh".to_string()), // Override shell
             continue_on_error: false,
-            require_approval: false,
+            require_approval: ApprovalMode::Never,
             timeout: None,
         };
 
@@ -1094,7 +1108,7 @@ shell: bash
             uses: Some("airlock-hq/airlock/defaults/lint@main".to_string()),
             shell: None,
             continue_on_error: false,
-            require_approval: false,
+            require_approval: ApprovalMode::Never,
             timeout: None,
         };
 

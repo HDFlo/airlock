@@ -9,7 +9,7 @@
 //!
 //! Each stage runs as a shell command in the run's worktree directory.
 
-use airlock_core::{AirlockPaths, StepDefinition, StepResult, StepStatus};
+use airlock_core::{AirlockPaths, ApprovalMode, StepDefinition, StepResult, StepStatus};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -832,7 +832,12 @@ pub async fn execute_stage_with_log_callback(
 
     // Determine final status
     if exec_result.passed {
-        if stage.require_approval {
+        let should_pause = match stage.require_approval {
+            ApprovalMode::Always => true,
+            ApprovalMode::IfPatches => has_pending_patches(&env.artifacts),
+            ApprovalMode::Never => false,
+        };
+        if should_pause {
             // Stage passed but requires approval before proceeding
             stage_result.status = StepStatus::AwaitingApproval;
             info!("Stage '{}' completed and awaiting approval", stage.name);
@@ -984,6 +989,26 @@ fn compute_merge_base_fallback(worktree_path: &Path, reason: &str) -> Result<Str
     Ok(sha)
 }
 
+/// Check if the artifacts directory contains pending (unapplied) patches.
+///
+/// A patch is "pending" if it is a `.json` file at the top level of `patches/`.
+/// Applied patches are moved to `patches/applied/` by the freeze stage.
+pub fn has_pending_patches(artifacts_dir: &Path) -> bool {
+    let patches_dir = artifacts_dir.join("patches");
+    if !patches_dir.exists() {
+        return false;
+    }
+
+    let Ok(entries) = std::fs::read_dir(&patches_dir) else {
+        return false;
+    };
+
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        path.is_file() && path.extension().is_some_and(|e| e == "json")
+    })
+}
+
 /// Write stage stdout/stderr to log files in the logs directory.
 ///
 /// If log files already exist (written incrementally by the log streaming callback),
@@ -1044,7 +1069,7 @@ mod tests {
             uses: None,
             shell: None,
             continue_on_error: false,
-            require_approval: false,
+            require_approval: ApprovalMode::Never,
             timeout: None,
         }
     }
@@ -1355,7 +1380,7 @@ mod tests {
         let env = create_test_env(&temp_dir);
 
         let mut stage = create_test_stage("review", "true");
-        stage.require_approval = true;
+        stage.require_approval = ApprovalMode::Always;
 
         let result = execute_stage_with_log_callback(
             &stage,
@@ -1833,5 +1858,121 @@ mod tests {
             committer, "Airlock <airlock@airlockhq.com>",
             "Commit committer should be Airlock"
         );
+    }
+
+    // =========================================================================
+    // has_pending_patches tests
+    // =========================================================================
+
+    #[test]
+    fn test_has_pending_patches_no_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        assert!(!has_pending_patches(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_has_pending_patches_empty_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(temp_dir.path().join("patches")).unwrap();
+        assert!(!has_pending_patches(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_has_pending_patches_with_json_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let patches_dir = temp_dir.path().join("patches");
+        std::fs::create_dir_all(&patches_dir).unwrap();
+        std::fs::write(
+            patches_dir.join("fix.json"),
+            r#"{"title":"fix","diff":"..."}"#,
+        )
+        .unwrap();
+        assert!(has_pending_patches(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_has_pending_patches_non_json_ignored() {
+        let temp_dir = TempDir::new().unwrap();
+        let patches_dir = temp_dir.path().join("patches");
+        std::fs::create_dir_all(&patches_dir).unwrap();
+        std::fs::write(patches_dir.join("readme.txt"), "not a patch").unwrap();
+        assert!(!has_pending_patches(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_has_pending_patches_applied_subdir_ignored() {
+        let temp_dir = TempDir::new().unwrap();
+        let patches_dir = temp_dir.path().join("patches");
+        let applied_dir = patches_dir.join("applied");
+        std::fs::create_dir_all(&applied_dir).unwrap();
+        std::fs::write(
+            applied_dir.join("fix.json"),
+            r#"{"title":"fix","diff":"..."}"#,
+        )
+        .unwrap();
+        // Only top-level .json files count; applied/ subdir is ignored
+        assert!(!has_pending_patches(temp_dir.path()));
+    }
+
+    // =========================================================================
+    // if_patches approval mode tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_execute_stage_if_patches_with_patches() {
+        let temp_dir = TempDir::new().unwrap();
+        let env = create_test_env(&temp_dir);
+
+        // Create pending patches
+        let patches_dir = env.artifacts.join("patches");
+        std::fs::create_dir_all(&patches_dir).unwrap();
+        std::fs::write(
+            patches_dir.join("fix.json"),
+            r#"{"title":"fix","diff":"..."}"#,
+        )
+        .unwrap();
+
+        let mut stage = create_test_stage("review", "true");
+        stage.require_approval = ApprovalMode::IfPatches;
+
+        let result = execute_stage_with_log_callback(
+            &stage,
+            "sr-1",
+            "run-1",
+            &env,
+            Duration::from_secs(10),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Patches exist → should pause
+        assert_eq!(result.status, StepStatus::AwaitingApproval);
+    }
+
+    #[tokio::test]
+    async fn test_execute_stage_if_patches_without_patches() {
+        let temp_dir = TempDir::new().unwrap();
+        let env = create_test_env(&temp_dir);
+
+        // No patches directory
+        let mut stage = create_test_stage("review", "true");
+        stage.require_approval = ApprovalMode::IfPatches;
+
+        let result = execute_stage_with_log_callback(
+            &stage,
+            "sr-1",
+            "run-1",
+            &env,
+            Duration::from_secs(10),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // No patches → should pass through
+        assert_eq!(result.status, StepStatus::Passed);
     }
 }

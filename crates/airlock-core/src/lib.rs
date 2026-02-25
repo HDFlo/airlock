@@ -69,11 +69,11 @@ pub use paths::AirlockPaths;
 pub use provider::{check_provider_setup, detect_provider, ProviderCheck, ScmProvider};
 pub use service::ServiceManager;
 pub use types::{
-    CleanResult, DependencyGraph, DiffAnalysis, DiffHunk, FileChange, FileStatus, FormatResult,
-    GuidedTour, HunkDependencies, Intent, IntentCategory, IntentStatus, JobResult, JobStatus,
-    LineAnnotation, LintIssue, LintResult, RefAnalysis, RefUpdate, Repo, Run, SecretFinding,
-    SecretsResult, SplitAnalysis, SplitHunk, SplitIntent, StepDefinition, StepResult, StepStatus,
-    SyncLog, TourResult, TourStep,
+    ApprovalMode, CleanResult, DependencyGraph, DiffAnalysis, DiffHunk, FileChange, FileStatus,
+    FormatResult, GuidedTour, HunkDependencies, Intent, IntentCategory, IntentStatus, JobResult,
+    JobStatus, LineAnnotation, LintIssue, LintResult, RefAnalysis, RefUpdate, Repo, Run,
+    SecretFinding, SecretsResult, SplitAnalysis, SplitHunk, SplitIntent, StepDefinition,
+    StepResult, StepStatus, SyncLog, TourResult, TourStep,
 };
 pub use worktree::{
     create_run_worktree, list_worktrees, remove_run_worktree, remove_worktree,

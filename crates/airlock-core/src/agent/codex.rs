@@ -76,13 +76,7 @@ impl AgentAdapter for CodexAdapter {
 fn build_args(request: &AgentRequest) -> Result<Vec<String>> {
     let mut args = vec!["exec".to_string(), "--json".to_string()];
 
-    // Auto-approve tool calls (non-interactive) with full disk + network
-    // access so the agent can run builds. Safe because it runs in an
-    // isolated worktree.
-    args.push("-a".to_string());
-    args.push("on-request".to_string());
-    args.push("--sandbox".to_string());
-    args.push("danger-full-access".to_string());
+    args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
 
     // Working directory
     if let Some(cwd) = &request.cwd {

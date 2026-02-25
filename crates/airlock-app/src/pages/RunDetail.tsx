@@ -120,13 +120,10 @@ export function RunDetail() {
   // Count pending patches for tab badge
   const pendingPatchCount = useMemo(() => {
     if (!detail?.artifacts) return 0;
-    const patchArtifacts = detail.artifacts.filter((a) => a.path.includes('/patches/') && a.path.endsWith('.json'));
-
-    const freezeStep = detail.step_results.find((s) => s.step === 'freeze' && s.status === 'passed');
-    const freezeCompletedAt = freezeStep?.completed_at;
-
-    return patchArtifacts.filter((a) => freezeCompletedAt == null || a.created_at > freezeCompletedAt).length;
-  }, [detail?.artifacts, detail?.step_results]);
+    return detail.artifacts.filter(
+      (a) => a.path.includes('/patches/') && !a.path.includes('/patches/applied/') && a.path.endsWith('.json')
+    ).length;
+  }, [detail?.artifacts]);
 
   // Store active tab in URL search params so it survives refreshes and is shareable
   const [searchParams, setSearchParams] = useSearchParams();
@@ -307,12 +304,7 @@ export function RunDetail() {
             </TabsContent>
 
             <TabsContent value="patches" className="mt-0 min-h-0 flex-1">
-              <PatchesTab
-                artifacts={detail.artifacts}
-                stepResults={detail.step_results}
-                runId={runId!}
-                onPatchesApplied={refresh}
-              />
+              <PatchesTab artifacts={detail.artifacts} runId={runId!} onPatchesApplied={refresh} />
             </TabsContent>
           </Tabs>
         ) : (
