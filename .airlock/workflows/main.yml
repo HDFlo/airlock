@@ -38,7 +38,7 @@ jobs:
       # Push changes to upstream (pauses for user approval first)
       - name: push
         uses: airlock-hq/airlock/defaults/push@main
-        require_approval: true
+        require-approval: if_patches
 
       # Create pull/merge request
       - name: create-pr
