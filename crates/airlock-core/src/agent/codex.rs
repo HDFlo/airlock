@@ -588,10 +588,7 @@ mod tests {
         let args = build_args(&request).unwrap();
         assert!(args.contains(&"exec".to_string()));
         assert!(args.contains(&"--json".to_string()));
-        assert!(args.contains(&"-a".to_string()));
-        assert!(args.contains(&"on-request".to_string()));
-        assert!(args.contains(&"--sandbox".to_string()));
-        assert!(args.contains(&"danger-full-access".to_string()));
+        assert!(args.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
         assert_eq!(args.last().unwrap(), "Do something");
     }
 
