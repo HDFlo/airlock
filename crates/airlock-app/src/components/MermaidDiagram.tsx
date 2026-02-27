@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import mermaid from 'mermaid';
 import { TransformWrapper, TransformComponent, useControls } from 'react-zoom-pan-pinch';
 import { ZoomIn, ZoomOut, Maximize } from 'lucide-react';
 
 let initialized = false;
+const COLOR_FOREGROUND = 'hsl(var(--foreground))';
+const COLOR_FOREGROUND_MUTED = 'hsl(var(--foreground-muted))';
+const COLOR_BORDER = 'hsl(var(--border))';
 
 function ensureInit() {
   if (!initialized) {
@@ -16,23 +19,23 @@ function ensureInit() {
       themeVariables: {
         // Node defaults
         primaryColor: 'transparent',
-        primaryTextColor: '#1B2236',
-        primaryBorderColor: '#626D84',
+        primaryTextColor: COLOR_FOREGROUND,
+        primaryBorderColor: COLOR_FOREGROUND_MUTED,
         // Lines & edges
-        lineColor: '#626D84',
+        lineColor: COLOR_FOREGROUND_MUTED,
         edgeLabelBackground: 'transparent',
         // Secondary / tertiary
         secondaryColor: 'transparent',
-        secondaryTextColor: '#1B2236',
-        secondaryBorderColor: '#626D84',
+        secondaryTextColor: COLOR_FOREGROUND,
+        secondaryBorderColor: COLOR_FOREGROUND_MUTED,
         tertiaryColor: 'transparent',
-        tertiaryTextColor: '#1B2236',
-        tertiaryBorderColor: '#626D84',
+        tertiaryTextColor: COLOR_FOREGROUND,
+        tertiaryBorderColor: COLOR_FOREGROUND_MUTED,
         // Text
-        textColor: '#1B2236',
+        textColor: COLOR_FOREGROUND,
         // Subgraph
         clusterBkg: 'transparent',
-        clusterBorder: '#C0C5CF',
+        clusterBorder: COLOR_BORDER,
         // Font
         fontSize: '14px',
       },
@@ -40,13 +43,13 @@ function ensureInit() {
         /* Transparent edge label backgrounds */
         .labelBkg { background-color: transparent !important; }
         .edgeLabel { background-color: transparent !important; }
-        .edgeLabel span { color: #626D84 !important; font-size: 12px !important; }
+        .edgeLabel span { color: ${COLOR_FOREGROUND_MUTED} !important; font-size: 12px !important; }
         /* Node text */
-        .nodeLabel { color: #1B2236 !important; }
+        .nodeLabel { color: ${COLOR_FOREGROUND} !important; }
         /* Edge paths */
-        .flowchart-link { stroke: #C0C5CF !important; }
+        .flowchart-link { stroke: ${COLOR_BORDER} !important; }
         /* Arrowheads */
-        marker[id^="flowchart-"] path { fill: #626D84 !important; stroke: #626D84 !important; }
+        marker[id^="flowchart-"] path { fill: ${COLOR_FOREGROUND_MUTED} !important; stroke: ${COLOR_FOREGROUND_MUTED} !important; }
       `,
     });
     initialized = true;
@@ -141,37 +144,36 @@ export function MermaidDiagram({ chart }: { chart: string }) {
 
 /** Renders the SVG inside a zoom/pan container, scaled to fit on first mount. */
 function DiagramViewer({ svgContent }: { svgContent: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [fitScale, setFitScale] = useState<number | null>(null);
+  const [containerWidth, setContainerWidth] = useState<number>(() => window.innerWidth);
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const containerWidth = el.clientWidth;
+    const handleResize = () => setContainerWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const fitScale = useMemo(() => {
     const dims = parseSvgDimensions(svgContent);
     if (!dims) {
-      setFitScale(1);
-      return;
+      return 1;
     }
     const pad = 32;
     const scaleX = (containerWidth - pad) / dims.width;
     const scaleY = MAX_HEIGHT / dims.height;
-    setFitScale(Math.min(scaleX, scaleY, 1));
-  }, [svgContent]);
+    return Math.min(scaleX, scaleY, 1);
+  }, [svgContent, containerWidth]);
 
   return (
-    <div ref={containerRef} className="border-border-subtle group relative my-4 overflow-hidden rounded-lg border">
-      {fitScale !== null && (
-        <TransformWrapper initialScale={fitScale} minScale={0.1} maxScale={4} centerOnInit wheel={{ step: 0.1 }}>
-          <Controls />
-          <TransformComponent
-            wrapperStyle={{ width: '100%', height: `${MAX_HEIGHT}px` }}
-            contentStyle={{ display: 'flex', justifyContent: 'center' }}
-          >
-            <div dangerouslySetInnerHTML={{ __html: svgContent }} />
-          </TransformComponent>
-        </TransformWrapper>
-      )}
+    <div className="border-border-subtle group relative my-4 overflow-hidden rounded-lg border">
+      <TransformWrapper initialScale={fitScale} minScale={0.1} maxScale={4} centerOnInit wheel={{ step: 0.1 }}>
+        <Controls />
+        <TransformComponent
+          wrapperStyle={{ width: '100%', height: `${MAX_HEIGHT}px` }}
+          contentStyle={{ display: 'flex', justifyContent: 'center' }}
+        >
+          <div dangerouslySetInnerHTML={{ __html: svgContent }} />
+        </TransformComponent>
+      </TransformWrapper>
     </div>
   );
 }
