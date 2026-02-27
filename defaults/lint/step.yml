@@ -11,12 +11,6 @@ run: |
       echo "No changed files detected, skipping lint."
       mkdir -p "$AIRLOCK_ARTIFACTS"
       echo '{"verdict":"skip","summary":"No changed files","details":null,"fixes_applied":false,"passed":true,"exit_code":0}' > "$AIRLOCK_ARTIFACTS/lint_result.json"
-      cat << 'EOF' | airlock artifact content --title "Lint & Format Results"
-  **⏭️ Lint Skipped**
-
-  ## Summary
-  No changed files detected.
-  EOF
       exit 0
   fi
 
@@ -24,8 +18,6 @@ run: |
   SCHEMA='{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail","skip"]},"summary":{"type":"string"},"details":{"type":["string","null"]}},"required":["verdict","summary","details"]}'
 
   LINT_SCRIPT=".airlock/lint.sh"
-  AGENT_CALLED="false"
-
   if [[ -x "$LINT_SCRIPT" ]]; then
       #---------------------------------------------------------------
       # CACHE HIT: Run the cached lint script
@@ -44,7 +36,6 @@ run: |
       else
           # Cache hit but lint failed — call agent to fix issues
           echo "Cached lint script exited with code $LINT_EXIT, calling agent to fix..."
-          AGENT_CALLED="true"
 
           PROMPT="You are a software developer assistant called Airlock. The project's cached lint script (.airlock/lint.sh) ran and found issues.
 
@@ -81,7 +72,6 @@ run: |
       # NO CACHE: Agent discovers setup and creates lint.sh
       #---------------------------------------------------------------
       echo "No cached lint script found, running agent discovery..."
-      AGENT_CALLED="true"
 
       PROMPT="You are a software developer assistant called Airlock. Your task is to discover the project's lint/format setup, create a reusable lint script, and fix any issues in the changed files.
 
@@ -155,60 +145,16 @@ run: |
       echo "Auto-fixes were applied and submitted as a patch."
   fi
 
-  # Prepare artifacts directory
-  mkdir -p "$AIRLOCK_ARTIFACTS"
-
-  # Determine status text for the artifact
+  # Determine exit code from verdict
   case "$VERDICT" in
-      pass)
-          if [[ "$FIXES_APPLIED" == "true" ]]; then
-              STATUS="✅ Lint Passed (fixes applied)"
-          elif [[ "$AGENT_CALLED" == "false" ]]; then
-              STATUS="✅ Lint Passed (cached, no agent)"
-          else
-              STATUS="✅ Lint Passed (clean)"
-          fi
-          EXIT_CODE=0
-          PASSED="true"
-          ;;
-      fail)
-          STATUS="❌ Lint Failed (unfixable issues remain)"
-          EXIT_CODE=1
-          PASSED="false"
-          ;;
-      skip)
-          STATUS="⏭️ Lint Skipped"
-          EXIT_CODE=0
-          PASSED="true"
-          ;;
-      *)
-          STATUS="⚠️ Unknown verdict: $VERDICT"
-          EXIT_CODE=1
-          PASSED="false"
-          ;;
+      pass)  EXIT_CODE=0; PASSED="true" ;;
+      skip)  EXIT_CODE=0; PASSED="true" ;;
+      fail)  EXIT_CODE=1; PASSED="false" ;;
+      *)     EXIT_CODE=1; PASSED="false" ;;
   esac
 
-  # Write lint result as content artifact
-  if [[ -n "$DETAILS" ]]; then
-      cat << EOF | airlock artifact content --title "Lint & Format Results"
-  **$STATUS**
-
-  ## Summary
-  $SUMMARY
-
-  ## Details
-  $DETAILS
-  EOF
-  else
-      cat << EOF | airlock artifact content --title "Lint & Format Results"
-  **$STATUS**
-
-  ## Summary
-  $SUMMARY
-  EOF
-  fi
-
   # Write lint_result.json for compatibility
+  mkdir -p "$AIRLOCK_ARTIFACTS"
   cat > "$AIRLOCK_ARTIFACTS/lint_result.json" << EOF
   {
     "verdict": $(echo "$VERDICT" | jq -Rs .),
