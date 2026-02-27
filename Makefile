@@ -55,12 +55,19 @@ frontend-dev:
 	cd crates/airlock-app && npm run dev
 
 # Start desktop app in development mode (includes frontend hot reload)
-# We manage Vite ourselves so the dev server is cleaned up when Tauri exits.
-# `npm run dev` spawns a child node process (Vite), so we kill both the npm
-# parent and its children to avoid orphaned processes on port 5173.
+# Suspends the production daemon and runs a dev build instead.
+# On exit (Ctrl+C), the production daemon is restored.
 dev:
-	@cd crates/airlock-app && npm run dev & VITE_PID=$$!; \
-	trap "pkill -P $$VITE_PID 2>/dev/null; kill $$VITE_PID 2>/dev/null; exit" INT TERM EXIT; \
+	@launchctl bootout gui/$$(id -u)/dev.airlock.daemon 2>/dev/null || true
+	@cargo build --bin airlockd
+	@cleanup() { \
+		pkill -P $$DAEMON_PID 2>/dev/null; kill $$DAEMON_PID 2>/dev/null; \
+		pkill -P $$VITE_PID 2>/dev/null; kill $$VITE_PID 2>/dev/null; \
+		launchctl bootstrap gui/$$(id -u) ~/Library/LaunchAgents/dev.airlock.daemon.plist 2>/dev/null || true; \
+	}; \
+	./target/debug/airlockd & DAEMON_PID=$$!; \
+	cd crates/airlock-app && npm run dev & VITE_PID=$$!; \
+	trap "cleanup; exit" INT TERM EXIT; \
 	sleep 2; \
 	cd crates/airlock-app && cargo tauri dev
 
@@ -108,7 +115,10 @@ clean:
 	rm -rf crates/airlock-app/node_modules/.vite
 
 # Run the daemon (debug build)
+# Suspends the production daemon; restores it on exit.
 daemon:
+	@launchctl bootout gui/$$(id -u)/dev.airlock.daemon 2>/dev/null || true
+	@trap "launchctl bootstrap gui/$$(id -u) ~/Library/LaunchAgents/dev.airlock.daemon.plist 2>/dev/null || true; exit" INT TERM EXIT; \
 	cargo run --bin airlockd
 
 # Run the CLI (debug build)
