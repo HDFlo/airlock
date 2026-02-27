@@ -96,26 +96,6 @@ run: |
           ;;
   esac
 
-  # Write document result as content artifact
-  if [[ -n "$DETAILS" ]]; then
-      cat << EOF | airlock artifact content --title "Documentation Review"
-  **$STATUS**
-
-  ## Summary
-  $SUMMARY
-
-  ## Details
-  $DETAILS
-  EOF
-  else
-      cat << EOF | airlock artifact content --title "Documentation Review"
-  **$STATUS**
-
-  ## Summary
-  $SUMMARY
-  EOF
-  fi
-
   # Write document_result.json for compatibility
   cat > "$AIRLOCK_ARTIFACTS/document_result.json" << EOF
   {

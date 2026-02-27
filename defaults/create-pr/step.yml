@@ -120,31 +120,4 @@ run: |
       echo "Error: $ERROR"
   fi
 
-  # Write content artifact for UI display
-  if [[ "$SUCCESS" == "true" ]]; then
-      cat << EOF | airlock artifact content --title "Pull Request"
-  # Pull Request Created
-
-  **Platform:** $PLATFORM
-  **URL:** $PR_URL
-  **Branch:** \`$BRANCH\`
-
-  ## Summary
-  $SUMMARY
-  EOF
-  else
-      cat << EOF | airlock artifact content --title "Pull Request"
-  # Pull Request Failed
-
-  **Platform:** $PLATFORM
-  **Branch:** \`$BRANCH\`
-
-  ## Error
-  $ERROR
-
-  ## Summary
-  $SUMMARY
-  EOF
-  fi
-
   exit $EXIT_CODE

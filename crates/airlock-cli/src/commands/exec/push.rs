@@ -135,7 +135,6 @@ pub async fn push() -> Result<()> {
                 &ref_name,
                 &msg,
             )?;
-            write_content_artifact(&artifacts_dir, false, branch, &upstream_url, &msg)?;
             anyhow::bail!("{}", msg);
         }
     }
@@ -174,7 +173,6 @@ pub async fn push() -> Result<()> {
                 &ref_name,
                 "Push successful",
             )?;
-            write_content_artifact(&artifacts_dir, true, branch, &upstream_url, &worktree_head)?;
 
             info!(
                 "Push complete: {} -> {} ({})",
@@ -206,7 +204,6 @@ pub async fn push() -> Result<()> {
                 &ref_name,
                 &error_msg,
             )?;
-            write_content_artifact(&artifacts_dir, false, branch, &upstream_url, &error_msg)?;
 
             return Err(e.into());
         }
@@ -285,48 +282,6 @@ fn write_push_result(
         .with_context(|| format!("Failed to write push_result.json: {:?}", path))?;
 
     debug!("Wrote push_result.json to {:?}", path);
-    Ok(())
-}
-
-/// Write a content artifact for the Push Request UI.
-fn write_content_artifact(
-    artifacts_dir: &Path,
-    success: bool,
-    branch: &str,
-    upstream_url: &str,
-    detail: &str,
-) -> Result<()> {
-    let content_dir = artifacts_dir.join("content");
-    std::fs::create_dir_all(&content_dir)
-        .with_context(|| format!("Failed to create content directory: {:?}", content_dir))?;
-
-    let id = uuid::Uuid::new_v4().to_string();
-    let output_path = content_dir.join(format!("{}.md", id));
-
-    let markdown = if success {
-        format!(
-            "---\ntitle: \"Push Result\"\n---\n\n\
-             # Push Successful\n\n\
-             **Branch:** `{}`\n\
-             **Upstream:** `{}`\n\
-             **Commit:** `{}`\n",
-            branch, upstream_url, detail
-        )
-    } else {
-        format!(
-            "---\ntitle: \"Push Result\"\n---\n\n\
-             # Push Failed\n\n\
-             **Branch:** `{}`\n\
-             **Upstream:** `{}`\n\n\
-             ## Output\n```\n{}\n```\n",
-            branch, upstream_url, detail
-        )
-    };
-
-    std::fs::write(&output_path, &markdown)
-        .with_context(|| format!("Failed to write content artifact: {:?}", output_path))?;
-
-    debug!("Wrote content artifact to {:?}", output_path);
     Ok(())
 }
 
