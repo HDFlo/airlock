@@ -1,7 +1,7 @@
 //! Individual diagnostic check functions for the doctor command.
 
 use super::DiagnosticResult;
-use airlock_core::{git, AirlockPaths, Database};
+use airlock_core::{git, init::BYPASS_REMOTE, AirlockPaths, Database};
 use std::path::Path;
 use tracing::debug;
 
@@ -212,32 +212,40 @@ pub(crate) fn check_remotes(working_dir: &Path, repo: &airlock_core::Repo) -> Di
         );
     }
 
-    // Check upstream remote exists and points to the right URL
-    let upstream_url = match git::get_remote_url(&working_repo, "upstream") {
-        Ok(url) => url,
-        Err(_) => {
+    // Check bypass remote exists and points to the right URL (accept legacy "upstream" too)
+    let (bypass_name, bypass_url) =
+        if let Ok(url) = git::get_remote_url(&working_repo, BYPASS_REMOTE) {
+            (BYPASS_REMOTE, url)
+        } else if let Ok(url) = git::get_remote_url(&working_repo, "upstream") {
+            ("upstream", url) // Legacy name from older Airlock versions
+        } else {
             return DiagnosticResult::fail(
                 "Remotes",
-                "'upstream' remote not found",
+                format!("'{}' remote not found", BYPASS_REMOTE),
                 "Run 'airlock eject' then 'airlock init' to reconfigure",
             );
-        }
-    };
+        };
 
-    if upstream_url != repo.upstream_url {
+    if bypass_url != repo.upstream_url {
         return DiagnosticResult::fail(
             "Remotes",
             format!(
-                "'upstream' points to '{}' but should point to '{}'",
-                upstream_url, repo.upstream_url
+                "'{}' points to '{}' but should point to '{}'",
+                bypass_name, bypass_url, repo.upstream_url
             ),
-            "Update upstream remote with: git remote set-url upstream <correct-url>",
+            format!(
+                "Update remote with: git remote set-url {} <correct-url>",
+                bypass_name
+            ),
         );
     }
 
     DiagnosticResult::pass(
         "Remotes",
-        "Remote configuration is correct (origin → gate, upstream → remote)",
+        format!(
+            "Remote configuration is correct (origin → gate, {} → remote)",
+            bypass_name
+        ),
     )
 }
 

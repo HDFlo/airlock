@@ -9,6 +9,7 @@
 //! block init or eject.
 
 use crate::error::{AirlockError, Result};
+use crate::init::BYPASS_REMOTE;
 use std::path::Path;
 use std::process::Command;
 
@@ -117,12 +118,12 @@ pub fn untrack_bookmarks(working_path: &Path, remote: &str) -> Result<()> {
 ///
 /// After init, git remotes are rewired:
 ///   - `origin` → local gate
-///   - `upstream` → real remote (e.g., GitHub)
+///   - `bypass-airlock` → real remote (e.g., GitHub)
 ///
 /// We need jj to:
 ///   1. Import the git ref changes (`jj git import`)
 ///   2. Track bookmarks from `origin` (gate)
-///   3. Untrack bookmarks from `upstream` (so jj doesn't show them as tracked)
+///   3. Untrack bookmarks from `bypass-airlock` (so jj doesn't show them as tracked)
 pub fn sync_after_init(working_path: &Path) -> Result<()> {
     tracing::debug!(
         "Synchronizing jj bookmarks after init in {}",
@@ -132,10 +133,13 @@ pub fn sync_after_init(working_path: &Path) -> Result<()> {
     git_import(working_path)?;
     track_bookmarks(working_path, "origin")?;
 
-    // Untracking upstream bookmarks may fail if upstream has no bookmarks yet
+    // Untracking bypass-airlock bookmarks may fail if the remote has no bookmarks yet
     // (e.g., fresh repo). That's fine — log and continue.
-    if let Err(e) = untrack_bookmarks(working_path, "upstream") {
-        tracing::warn!("Failed to untrack upstream bookmarks (non-fatal): {}", e);
+    if let Err(e) = untrack_bookmarks(working_path, BYPASS_REMOTE) {
+        tracing::warn!(
+            "Failed to untrack bypass-airlock bookmarks (non-fatal): {}",
+            e
+        );
     }
 
     tracing::debug!("jj bookmark sync after init completed");
@@ -146,7 +150,7 @@ pub fn sync_after_init(working_path: &Path) -> Result<()> {
 ///
 /// After eject, git remotes are restored:
 ///   - `origin` → real remote (e.g., GitHub)
-///   - `upstream` is removed
+///   - `bypass-airlock` is removed
 ///
 /// We need jj to:
 ///   1. Import the git ref changes (`jj git import`)
@@ -258,7 +262,7 @@ mod tests {
             .unwrap();
         assert!(output.status.success());
 
-        // Simulate init remote rewiring: rename origin → upstream, add new origin (gate)
+        // Simulate init remote rewiring: rename origin → bypass-airlock, add new origin (gate)
         let gate_dir = temp_dir.path().join("gate.git");
         let output = Command::new("git")
             .args(["init", "--bare", gate_dir.to_str().unwrap()])
@@ -273,7 +277,7 @@ mod tests {
                 "remote",
                 "rename",
                 "origin",
-                "upstream",
+                BYPASS_REMOTE,
             ])
             .output()
             .unwrap();

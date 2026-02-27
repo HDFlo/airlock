@@ -19,6 +19,9 @@ pub const REPO_CONFIG_PATH: &str = ".airlock/workflows";
 /// Default workflow filename created on init.
 pub const DEFAULT_WORKFLOW_FILENAME: &str = "main.yml";
 
+/// Remote name for the bypass (escape hatch) remote pointing to the original upstream.
+pub const BYPASS_REMOTE: &str = "bypass-airlock";
+
 /// Default workflow content for new repositories.
 pub const DEFAULT_WORKFLOW_YAML: &str = r#"# Airlock workflow configuration
 # Documentation: https://github.com/airlock-hq/airlock
@@ -131,10 +134,11 @@ pub fn init_repo(working_dir: &Path, paths: &AirlockPaths, db: &Database) -> Res
         );
     }
 
-    if git::remote_exists(&working_repo, "upstream") {
+    if git::remote_exists(&working_repo, BYPASS_REMOTE) {
         anyhow::bail!(
-            "An 'upstream' remote already exists. This repository may already be initialized with Airlock.\n\
-             Run 'airlock eject' first if you want to re-initialize."
+            "A '{}' remote already exists. This repository may already be initialized with Airlock.\n\
+             Run 'airlock eject' first if you want to re-initialize.",
+            BYPASS_REMOTE
         );
     }
 
@@ -184,12 +188,12 @@ pub fn init_repo(working_dir: &Path, paths: &AirlockPaths, db: &Database) -> Res
     );
 
     if result.is_err() {
-        // Best-effort rollback: if we renamed origin → upstream, undo it.
-        // We know upstream didn't exist before (validated above), so if it
+        // Best-effort rollback: if we renamed origin → bypass-airlock, undo it.
+        // We know bypass-airlock didn't exist before (validated above), so if it
         // exists now, we created it.
-        if git::remote_exists(&working_repo, "upstream") {
+        if git::remote_exists(&working_repo, BYPASS_REMOTE) {
             let _ = git::remove_remote(&working_repo, "origin");
-            let _ = git::rename_remote(&working_repo, "upstream", "origin");
+            let _ = git::rename_remote(&working_repo, BYPASS_REMOTE, "origin");
         }
         let _ = std::fs::remove_dir_all(&gate_path);
     }
@@ -235,14 +239,14 @@ fn do_init(
     debug!("Created bare repo gate with origin remote");
 
     // Rewire working repo remotes
-    git::rename_remote(working_repo, "origin", "upstream")
-        .context("Failed to rename origin to upstream")?;
+    git::rename_remote(working_repo, "origin", BYPASS_REMOTE)
+        .context("Failed to rename origin to bypass-airlock")?;
 
     let gate_url = gate_path.to_string_lossy().to_string();
     git::add_remote(working_repo, "origin", &gate_url)
         .context("Failed to add new origin pointing to gate")?;
 
-    debug!("Rewired remotes: origin -> gate, upstream -> original remote");
+    debug!("Rewired remotes: origin -> gate, bypass-airlock -> original remote");
 
     // Install hooks in bare repo
     git::install_hooks(gate_path).context("Failed to install hooks in gate")?;
@@ -307,8 +311,8 @@ fn do_init(
     // This runs outside the mirror_from_remote success block because even if
     // mirror/fetch failed, we should still fix tracking for branches that
     // already have matching origin/* refs.
-    debug!("Repointing tracking branches from upstream to origin...");
-    if let Err(e) = git::repoint_tracking_branches(working_path, "upstream", "origin") {
+    debug!("Repointing tracking branches from bypass-airlock to origin...");
+    if let Err(e) = git::repoint_tracking_branches(working_path, BYPASS_REMOTE, "origin") {
         warn!("Failed to repoint tracking branches (non-fatal): {}", e);
     }
 
@@ -388,19 +392,24 @@ pub fn eject_repo(working_dir: &Path, paths: &AirlockPaths, db: &Database) -> Re
 
     debug!("Found repo in database: {}", repo.id);
 
-    // Validate that upstream remote exists
-    if !git::remote_exists(&working_repo, "upstream") {
+    // Validate that bypass remote exists (accept legacy "upstream" name too)
+    let bypass_name = if git::remote_exists(&working_repo, BYPASS_REMOTE) {
+        BYPASS_REMOTE
+    } else if git::remote_exists(&working_repo, "upstream") {
+        "upstream" // Legacy name from older Airlock versions
+    } else {
         anyhow::bail!(
-            "No 'upstream' remote found. The repository may be in an inconsistent state.\n\
-             Please manually fix your remotes or remove the repo from the database."
+            "No '{}' remote found. The repository may be in an inconsistent state.\n\
+             Please manually fix your remotes or remove the repo from the database.",
+            BYPASS_REMOTE
         );
-    }
+    };
 
     let upstream_url =
-        git::get_remote_url(&working_repo, "upstream").context("Failed to get upstream URL")?;
+        git::get_remote_url(&working_repo, bypass_name).context("Failed to get upstream URL")?;
 
-    // Repoint branches from origin (gate) to upstream before removing origin.
-    if let Err(e) = git::repoint_tracking_branches(&working_path, "origin", "upstream") {
+    // Repoint branches from origin (gate) to bypass remote before removing origin.
+    if let Err(e) = git::repoint_tracking_branches(&working_path, "origin", bypass_name) {
         warn!("Failed to repoint branches before eject (non-fatal): {}", e);
     }
 
@@ -410,10 +419,10 @@ pub fn eject_repo(working_dir: &Path, paths: &AirlockPaths, db: &Database) -> Re
         debug!("Removed origin remote (gate)");
     }
 
-    // Rename upstream back to origin
-    git::rename_remote(&working_repo, "upstream", "origin")
-        .context("Failed to rename upstream to origin")?;
-    debug!("Renamed upstream to origin");
+    // Rename bypass remote back to origin
+    git::rename_remote(&working_repo, bypass_name, "origin")
+        .context("Failed to rename bypass remote to origin")?;
+    debug!("Renamed {} to origin", bypass_name);
 
     // Restore tracking for branches that may have lost it when origin was removed.
     // remove_remote strips branch.*.remote/merge config for branches tracking the deleted remote,

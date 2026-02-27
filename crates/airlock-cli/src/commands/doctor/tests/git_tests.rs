@@ -55,7 +55,7 @@ fn test_check_remotes_correct() {
 
     // Configure remotes correctly
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    repo.remote("upstream", "https://github.com/user/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
 
     let test_repo = Repo {
@@ -83,7 +83,7 @@ fn test_check_remotes_origin_wrong() {
 
     // Configure origin incorrectly
     repo.remote("origin", "https://wrong.com/repo.git").unwrap();
-    repo.remote("upstream", "https://github.com/user/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
 
     let test_repo = Repo {
@@ -101,7 +101,7 @@ fn test_check_remotes_origin_wrong() {
 }
 
 #[test]
-fn test_check_remotes_upstream_wrong() {
+fn test_check_remotes_bypass_airlock_wrong() {
     let temp_dir = TempDir::new().unwrap();
     let working_dir = temp_dir.path().join("working");
     let gate_path = temp_dir.path().join("gate.git");
@@ -109,9 +109,9 @@ fn test_check_remotes_upstream_wrong() {
     fs::create_dir_all(&working_dir).unwrap();
     let repo = create_test_working_repo(&working_dir);
 
-    // Configure origin correctly but upstream incorrectly
+    // Configure origin correctly but bypass-airlock incorrectly
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    repo.remote("upstream", "https://wrong.com/repo.git")
+    repo.remote("bypass-airlock", "https://wrong.com/repo.git")
         .unwrap();
 
     let test_repo = Repo {
@@ -125,7 +125,7 @@ fn test_check_remotes_upstream_wrong() {
 
     let result = check_remotes(&working_dir, &test_repo);
     assert!(!result.passed);
-    assert!(result.message.contains("'upstream' points to"));
+    assert!(result.message.contains("'bypass-airlock' points to"));
 }
 
 // ========================================
@@ -296,7 +296,7 @@ fn test_e2e_doctor_full_flow_includes_daemon_check() {
 
     // Configure working repo remotes
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    repo.remote("upstream", "https://github.com/user/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
 
     // Enroll in database
@@ -330,7 +330,7 @@ fn test_e2e_doctor_full_flow_includes_daemon_check() {
 // ========================================
 
 /// E2E test: Verifies that `airlock doctor` checks if remotes are correctly configured
-/// when both origin (pointing to gate) and upstream (pointing to remote) are correct.
+/// when both origin (pointing to gate) and bypass-airlock (pointing to remote) are correct.
 ///
 /// Test Plan Section 7.4: "E2E: Checks if remotes are correctly configured"
 #[test]
@@ -351,9 +351,9 @@ fn test_e2e_doctor_checks_remotes_correct_configuration() {
 
     // Configure working repo remotes correctly:
     // - origin points to gate (local proxy)
-    // - upstream points to the original remote URL
+    // - bypass-airlock points to the original remote URL
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    repo.remote("upstream", "https://github.com/user/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
 
     // Create the test repo record matching the expected configuration
@@ -447,7 +447,7 @@ fn test_e2e_doctor_checks_remotes_origin_wrong_url() {
     // Configure origin to point to wrong location (not the gate)
     repo.remote("origin", "https://github.com/user/repo.git")
         .unwrap();
-    repo.remote("upstream", "https://github.com/user/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
 
     let test_repo = Repo {
@@ -482,11 +482,11 @@ fn test_e2e_doctor_checks_remotes_origin_wrong_url() {
     );
 }
 
-/// E2E test: Verifies that `airlock doctor` detects when upstream remote is missing.
+/// E2E test: Verifies that `airlock doctor` detects when bypass-airlock remote is missing.
 ///
 /// Test Plan Section 7.4: "E2E: Checks if remotes are correctly configured"
 #[test]
-fn test_e2e_doctor_checks_remotes_upstream_missing() {
+fn test_e2e_doctor_checks_remotes_bypass_airlock_missing() {
     let temp_dir = TempDir::new().unwrap();
     let working_dir = temp_dir.path().join("working");
     let gate_path = temp_dir.path().join("gate.git");
@@ -494,9 +494,9 @@ fn test_e2e_doctor_checks_remotes_upstream_missing() {
     fs::create_dir_all(&working_dir).unwrap();
     let repo = create_test_working_repo(&working_dir);
 
-    // Configure only origin (pointing to gate), but no upstream
+    // Configure only origin (pointing to gate), but no bypass-airlock
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    // Note: Don't add upstream remote
+    // Note: Don't add bypass-airlock remote
 
     let test_repo = Repo {
         id: "test123".to_string(),
@@ -511,12 +511,12 @@ fn test_e2e_doctor_checks_remotes_upstream_missing() {
 
     assert!(
         !result.passed,
-        "Remote check should fail when upstream remote is missing"
+        "Remote check should fail when bypass-airlock remote is missing"
     );
     assert_eq!(result.name, "Remotes");
     assert!(
-        result.message.contains("'upstream' remote not found"),
-        "Message should indicate upstream not found: {}",
+        result.message.contains("'bypass-airlock' remote not found"),
+        "Message should indicate bypass-airlock remote not found: {}",
         result.message
     );
     assert!(
@@ -525,11 +525,11 @@ fn test_e2e_doctor_checks_remotes_upstream_missing() {
     );
 }
 
-/// E2E test: Verifies that `airlock doctor` detects when upstream points to wrong URL.
+/// E2E test: Verifies that `airlock doctor` detects when bypass-airlock points to wrong URL.
 ///
 /// Test Plan Section 7.4: "E2E: Checks if remotes are correctly configured"
 #[test]
-fn test_e2e_doctor_checks_remotes_upstream_wrong_url() {
+fn test_e2e_doctor_checks_remotes_bypass_airlock_wrong_url() {
     let temp_dir = TempDir::new().unwrap();
     let working_dir = temp_dir.path().join("working");
     let gate_path = temp_dir.path().join("gate.git");
@@ -537,9 +537,9 @@ fn test_e2e_doctor_checks_remotes_upstream_wrong_url() {
     fs::create_dir_all(&working_dir).unwrap();
     let repo = create_test_working_repo(&working_dir);
 
-    // Configure origin correctly but upstream to wrong URL
+    // Configure origin correctly but bypass-airlock to wrong URL
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    repo.remote("upstream", "https://github.com/wrong/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/wrong/repo.git")
         .unwrap();
 
     let test_repo = Repo {
@@ -555,12 +555,12 @@ fn test_e2e_doctor_checks_remotes_upstream_wrong_url() {
 
     assert!(
         !result.passed,
-        "Remote check should fail when upstream points to wrong URL"
+        "Remote check should fail when bypass-airlock points to wrong URL"
     );
     assert_eq!(result.name, "Remotes");
     assert!(
-        result.message.contains("'upstream' points to"),
-        "Message should indicate upstream points to wrong URL: {}",
+        result.message.contains("'bypass-airlock' points to"),
+        "Message should indicate bypass-airlock points to wrong URL: {}",
         result.message
     );
     assert!(
@@ -578,7 +578,7 @@ fn test_e2e_doctor_checks_remotes_upstream_wrong_url() {
             .as_ref()
             .unwrap()
             .contains("git remote set-url"),
-        "Suggestion should tell user to update upstream URL: {:?}",
+        "Suggestion should tell user to update bypass-airlock URL: {:?}",
         result.suggestion
     );
 }
@@ -616,7 +616,7 @@ fn test_e2e_doctor_full_flow_includes_remote_check() {
 
     // Configure working repo remotes correctly
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    repo.remote("upstream", "https://github.com/user/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
 
     // Enroll in database
@@ -755,7 +755,7 @@ fn test_e2e_doctor_reports_multiple_issues_with_suggestions() {
 
     // Configure working repo remotes correctly
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    repo.remote("upstream", "https://github.com/user/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
 
     // Enroll in database
@@ -920,7 +920,7 @@ fn test_e2e_doctor_returns_success_when_all_checks_pass() {
 
     // Configure working repo remotes correctly
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    repo.remote("upstream", "https://github.com/user/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
 
     // Enroll in database
@@ -1036,7 +1036,7 @@ fn test_e2e_doctor_success_output_format() {
     create_test_gate_repo(&gate_path);
     git::install_hooks(&gate_path).unwrap();
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    repo.remote("upstream", "https://github.com/user/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
     let test_repo = Repo {
         id: "test123".to_string(),

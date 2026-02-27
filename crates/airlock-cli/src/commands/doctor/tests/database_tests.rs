@@ -69,7 +69,7 @@ fn test_doctor_full_flow() {
         .remote("origin", env.gate_path.to_str().unwrap())
         .unwrap();
     env.repo
-        .remote("upstream", "https://github.com/user/repo.git")
+        .remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
 
     // Enroll in database

@@ -96,12 +96,34 @@ fn patch_workflow_approval(working_dir: &Path) -> Result<()> {
 
 /// Internal implementation that accepts paths for testability.
 pub(crate) fn run_with_paths(working_dir: &Path, paths: &AirlockPaths) -> Result<()> {
+    use indicatif::{ProgressBar, ProgressStyle};
+
     paths
         .ensure_dirs()
         .context("Failed to create Airlock directories")?;
     let db = Database::open(&paths.database()).context("Failed to open Airlock database")?;
 
-    let outcome = init::init_repo(working_dir, paths, &db)?;
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner} {msg}")
+            .unwrap(),
+    );
+    spinner.set_message("Setting up Airlock proxy repository...");
+    spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+
+    // Suppress info/debug logs while spinner is active to avoid corrupting the output.
+    // Warnings and errors still get through.
+    let quiet_subscriber = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new("warn"))
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .finish();
+    let result = tracing::subscriber::with_default(quiet_subscriber, || {
+        init::init_repo(working_dir, paths, &db)
+    });
+    spinner.finish_and_clear();
+    let outcome = result?;
 
     // Success!
     println!("✓ Airlock initialized successfully!");
@@ -112,11 +134,11 @@ pub(crate) fn run_with_paths(working_dir: &Path, paths: &AirlockPaths) -> Result
         println!();
     }
     println!("Your remotes have been reconfigured:");
-    println!("  origin   → local Airlock gate (pushes are intercepted)");
-    println!("  upstream → {} (escape hatch)", outcome.upstream_url);
+    println!("  origin         → local Airlock gate (pushes are intercepted)");
+    println!("  bypass-airlock → {} (escape hatch)", outcome.upstream_url);
     println!();
     println!("Push as normal with `git push origin <branch>`.");
-    println!("Use `git push upstream <branch>` to bypass Airlock.");
+    println!("Use `git push bypass-airlock <branch>` to bypass Airlock.");
 
     Ok(())
 }

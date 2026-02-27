@@ -2,154 +2,25 @@
 //!
 //! When the CLI is invoked without arguments, it spawns the desktop app
 //! as a detached process and exits immediately.
+//!
+//! The actual binary discovery and spawning logic lives in `airlock_core::gui`
+//! so it can be reused by the daemon for auto-launching.
 
-use anyhow::{Context, Result};
-use std::env;
-use std::path::PathBuf;
-use std::process::Command;
-
-/// The name of the GUI binary
-const GUI_BINARY_NAME: &str = "airlock-app";
-
-/// Environment variable to override GUI binary path
-const GUI_PATH_ENV_VAR: &str = "AIRLOCK_APP_PATH";
+use anyhow::Result;
 
 /// Attempt to find and launch the GUI application.
 ///
 /// Returns Ok(()) if the GUI was successfully spawned, or an error if
 /// the GUI binary could not be found or failed to start.
 pub fn launch() -> Result<()> {
-    let gui_path = find_gui_binary()?;
-    spawn_detached(&gui_path)
-}
-
-/// Find the GUI binary using the following precedence:
-/// 1. AIRLOCK_APP_PATH environment variable
-/// 2. Same directory as the CLI binary
-/// 3. Platform-specific install paths
-fn find_gui_binary() -> Result<PathBuf> {
-    // 1. Check environment variable
-    if let Ok(path) = env::var(GUI_PATH_ENV_VAR) {
-        let path = PathBuf::from(path);
-        if path.exists() && path.is_file() {
-            return Ok(path);
-        }
-        // If env var is set but path doesn't exist, continue to other options
-    }
-
-    // 2. Check same directory as CLI binary
-    if let Ok(current_exe) = env::current_exe() {
-        if let Some(parent) = current_exe.parent() {
-            let gui_path = parent.join(GUI_BINARY_NAME);
-            if gui_path.exists() && gui_path.is_file() {
-                return Ok(gui_path);
-            }
-        }
-    }
-
-    // 3. Check platform-specific paths
-    for path in platform_paths() {
-        if path.exists() && path.is_file() {
-            return Ok(path);
-        }
-    }
-
-    // GUI not found
-    Err(anyhow::anyhow!(
-        "Desktop app not found. Install it from https://airlock.dev/download\n\
-         or run 'airlock --help' for CLI commands."
-    ))
-}
-
-/// Get platform-specific paths to search for the GUI binary.
-fn platform_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-
-    #[cfg(target_os = "macos")]
-    {
-        // Standard macOS app bundle location
-        paths.push(PathBuf::from(
-            "/Applications/Airlock.app/Contents/MacOS/airlock-app",
-        ));
-
-        // User-local Applications folder
-        if let Some(home) = dirs::home_dir() {
-            paths.push(home.join("Applications/Airlock.app/Contents/MacOS/airlock-app"));
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        // System-wide installation
-        paths.push(PathBuf::from("/usr/bin/airlock-app"));
-        paths.push(PathBuf::from("/usr/local/bin/airlock-app"));
-
-        // User-local installation
-        if let Some(home) = dirs::home_dir() {
-            paths.push(home.join(".local/bin/airlock-app"));
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        // Standard Windows installation paths
-        if let Ok(program_files) = env::var("ProgramFiles") {
-            paths.push(PathBuf::from(program_files).join("Airlock/airlock-app.exe"));
-        }
-        if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
-            paths.push(PathBuf::from(local_app_data).join("Airlock/airlock-app.exe"));
-        }
-    }
-
-    paths
-}
-
-/// Spawn the GUI process in a detached manner.
-///
-/// On Unix systems, this creates a new process group and session.
-/// The child process will continue running after the CLI exits.
-fn spawn_detached(gui_path: &PathBuf) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-
-        // Create the command
-        let mut cmd = Command::new(gui_path);
-
-        // Pre-exec hook to create a new session (detach from terminal)
-        unsafe {
-            cmd.pre_exec(|| {
-                // Create a new session, making this process the session leader
-                libc::setsid();
-                Ok(())
-            });
-        }
-
-        // Spawn the process
-        cmd.spawn()
-            .with_context(|| format!("Failed to spawn GUI process: {}", gui_path.display()))?;
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-
-        // DETACHED_PROCESS flag (0x00000008) creates a new process group
-        // and doesn't inherit the console
-        const DETACHED_PROCESS: u32 = 0x00000008;
-
-        Command::new(gui_path)
-            .creation_flags(DETACHED_PROCESS)
-            .spawn()
-            .with_context(|| format!("Failed to spawn GUI process: {}", gui_path.display()))?;
-    }
-
-    Ok(())
+    let gui_path = airlock_core::gui::find_gui_binary()?;
+    airlock_core::gui::spawn_detached(&gui_path)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use airlock_core::gui::{find_gui_binary, GUI_BINARY_NAME, GUI_PATH_ENV_VAR};
+    use std::env;
     use std::fs::File;
     use tempfile::TempDir;
 
@@ -217,15 +88,6 @@ mod tests {
         let found_gui = parent.join(GUI_BINARY_NAME);
         assert!(found_gui.exists());
         assert!(found_gui.is_file());
-    }
-
-    #[test]
-    fn test_platform_paths_not_empty() {
-        // Platform paths should return at least one path on supported platforms
-        let paths = platform_paths();
-
-        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-        assert!(!paths.is_empty());
     }
 
     #[test]

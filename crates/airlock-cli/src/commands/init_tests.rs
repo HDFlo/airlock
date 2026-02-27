@@ -88,9 +88,9 @@ fn test_init_creates_gate_and_rewires_remotes() {
     let origin = working_repo.find_remote("origin").unwrap();
     assert_eq!(origin.url().unwrap(), gate_path.to_string_lossy());
 
-    // upstream points to original remote
-    let upstream = working_repo.find_remote("upstream").unwrap();
-    assert_eq!(upstream.url().unwrap(), remote_url);
+    // bypass-airlock points to original remote
+    let bypass = working_repo.find_remote("bypass-airlock").unwrap();
+    assert_eq!(bypass.url().unwrap(), remote_url);
 
     // Verify: Repo was recorded in database
     let db = Database::open(&paths.database()).unwrap();
@@ -145,7 +145,7 @@ fn test_init_fails_with_existing_upstream() {
     let repo = create_test_working_repo(&working_dir, &remote_url);
 
     // Add upstream remote (simulating already initialized)
-    repo.remote("upstream", "https://example.com/other.git")
+    repo.remote("bypass-airlock", "https://example.com/other.git")
         .unwrap();
 
     let paths = AirlockPaths::with_root(airlock_root);
@@ -154,7 +154,7 @@ fn test_init_fails_with_existing_upstream() {
     assert!(result.is_err(), "Expected error but got success");
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("'upstream' remote already exists"),
+        err_msg.contains("'bypass-airlock' remote already exists"),
         "Unexpected error message: {}",
         err_msg
     );
@@ -221,7 +221,9 @@ fn test_init_fails_if_already_enrolled() {
     // Manually restore remotes AND delete gate to simulate cleanup
     let working_repo = Repository::open(&working_dir).unwrap();
     working_repo.remote_delete("origin").unwrap();
-    working_repo.remote_rename("upstream", "origin").unwrap();
+    working_repo
+        .remote_rename("bypass-airlock", "origin")
+        .unwrap();
     fs::remove_dir_all(&gate_path).unwrap();
 
     // Second init should fail (repo already in database)
@@ -412,7 +414,7 @@ fn test_init_renames_origin_to_upstream_preserving_url() {
     let working_repo = Repository::open(&working_dir).unwrap();
     let origin_before = working_repo.find_remote("origin").unwrap();
     assert_eq!(origin_before.url().unwrap(), original_origin_url);
-    assert!(working_repo.find_remote("upstream").is_err());
+    assert!(working_repo.find_remote("bypass-airlock").is_err());
     drop(origin_before);
     drop(working_repo);
 
@@ -422,10 +424,10 @@ fn test_init_renames_origin_to_upstream_preserving_url() {
 
     let working_repo = Repository::open(&working_dir).unwrap();
 
-    let upstream = working_repo
-        .find_remote("upstream")
-        .expect("upstream remote should exist after init");
-    assert_eq!(upstream.url().unwrap(), original_origin_url);
+    let bypass = working_repo
+        .find_remote("bypass-airlock")
+        .expect("bypass-airlock remote should exist after init");
+    assert_eq!(bypass.url().unwrap(), original_origin_url);
 
     let origin_after = working_repo
         .find_remote("origin")

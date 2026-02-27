@@ -101,7 +101,7 @@ pub(super) fn setup_airlock_env() -> (TempDir, AirlockPaths, std::path::PathBuf,
     git::add_remote(&gate_repo, "origin", &origin_url).unwrap();
 
     // Rewire working repo remotes
-    git::rename_remote(&working_repo, "origin", "upstream").unwrap();
+    git::rename_remote(&working_repo, "origin", "bypass-airlock").unwrap();
     let gate_url = gate_path.to_string_lossy().to_string();
     git::add_remote(&working_repo, "origin", &gate_url).unwrap();
 

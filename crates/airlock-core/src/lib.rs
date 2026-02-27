@@ -23,6 +23,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod git;
+pub mod gui;
 pub mod init;
 pub mod ipc;
 pub mod jj;
@@ -64,7 +65,7 @@ pub use git::{
     compute_diff, find_effective_base_sha, hooks, show_file, DiffResult, RefUpdateType,
     DEFAULT_BRANCHES, EMPTY_TREE_SHA,
 };
-pub use init::REPO_CONFIG_PATH;
+pub use init::{BYPASS_REMOTE, REPO_CONFIG_PATH};
 pub use paths::AirlockPaths;
 pub use provider::{check_provider_setup, detect_provider, ProviderCheck, ScmProvider};
 pub use service::ServiceManager;

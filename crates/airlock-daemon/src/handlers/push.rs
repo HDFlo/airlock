@@ -83,6 +83,13 @@ pub async fn handle_push_received(ctx: Arc<HandlerContext>, params: serde_json::
     for (ready_repo_id, ready_refs) in all_ready {
         process_coalesced_push(ctx.clone(), &ready_repo_id, ready_refs).await;
     }
+
+    // Auto-launch desktop app (best-effort, non-blocking)
+    if let Ok(gui_path) = airlock_core::gui::find_gui_binary() {
+        if let Err(e) = airlock_core::gui::spawn_detached(&gui_path) {
+            debug!("Could not launch desktop app: {}", e);
+        }
+    }
 }
 
 /// Process a coalesced push after the debounce period.

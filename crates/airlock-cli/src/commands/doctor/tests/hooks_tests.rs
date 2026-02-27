@@ -385,7 +385,7 @@ fn test_e2e_doctor_full_flow_includes_hooks_check() {
 
     // Configure working repo remotes correctly
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    repo.remote("upstream", "https://github.com/user/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
 
     // Enroll in database
@@ -449,7 +449,7 @@ fn test_e2e_doctor_full_flow_fails_with_missing_hooks() {
 
     // Configure working repo remotes correctly
     repo.remote("origin", gate_path.to_str().unwrap()).unwrap();
-    repo.remote("upstream", "https://github.com/user/repo.git")
+    repo.remote("bypass-airlock", "https://github.com/user/repo.git")
         .unwrap();
 
     // Enroll in database

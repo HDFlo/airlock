@@ -130,40 +130,45 @@ fn test_e2e_helpful_message_shown_when_gui_binary_not_found() {
         "airlock --help",               // Alternative CLI usage
     ];
 
-    // The error message is defined in gui.rs - we verify by reading the source
-    let gui_source = include_str!("../../src/commands/gui.rs");
+    // The error message is defined in airlock_core::gui - verify by reading the core source
+    let core_gui_source = include_str!("../../../airlock-core/src/gui.rs");
 
     // Verify each component is present in the error message definition
     for component in &expected_error_components {
         assert!(
-            gui_source.contains(component),
-            "Error message should contain '{}'. The gui.rs source should define this error.",
+            core_gui_source.contains(component),
+            "Error message should contain '{}'. The core gui.rs source should define this error.",
             component
         );
     }
 
-    // Additionally, test that the find_gui_binary function exists and is called from launch()
+    // The CLI gui.rs delegates to airlock_core::gui
+    let cli_gui_source = include_str!("../../src/commands/gui.rs");
+
+    // Verify the CLI calls through to core
     assert!(
-        gui_source.contains("fn find_gui_binary()"),
-        "gui.rs should have find_gui_binary function"
-    );
-    assert!(
-        gui_source.contains("find_gui_binary()?"),
-        "launch() should call find_gui_binary()"
+        cli_gui_source.contains("find_gui_binary()?"),
+        "CLI gui.rs should call find_gui_binary()"
     );
 
-    // Test the unit test in gui.rs that verifies error message
+    // Verify the core has the function definition
     assert!(
-        gui_source.contains("test_find_gui_binary_not_found"),
-        "gui.rs should have a unit test for the not-found case"
+        core_gui_source.contains("fn find_gui_binary()"),
+        "core gui.rs should have find_gui_binary function"
+    );
+
+    // Verify the core has the unit test for the not-found case
+    assert!(
+        cli_gui_source.contains("test_find_gui_binary_not_found"),
+        "CLI gui.rs should have a unit test for the not-found case"
     );
     assert!(
-        gui_source.contains("Desktop app not found"),
-        "The test should verify 'Desktop app not found' message"
+        core_gui_source.contains("Desktop app not found"),
+        "Core gui.rs should define 'Desktop app not found' message"
     );
     assert!(
-        gui_source.contains("airlock.dev/download"),
-        "The test should verify download URL is in error"
+        core_gui_source.contains("airlock.dev/download"),
+        "Core gui.rs should include download URL in error"
     );
 
     // Restore original env var

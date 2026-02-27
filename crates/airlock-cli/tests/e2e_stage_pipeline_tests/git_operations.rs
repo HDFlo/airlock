@@ -310,7 +310,7 @@ fn test_init_creates_correct_remote_structure() {
         .trim()
         .to_string();
 
-    let upstream_output = git_command(&["remote", "get-url", "upstream"], &working_path);
+    let upstream_output = git_command(&["remote", "get-url", "bypass-airlock"], &working_path);
     assert!(upstream_output.status.success());
     let upstream_url = String::from_utf8_lossy(&upstream_output.stdout)
         .trim()
@@ -340,7 +340,7 @@ fn test_escape_hatch_push_to_upstream() {
         "Test escape hatch",
     );
 
-    let output = git_command(&["push", "upstream", "master"], &working_path);
+    let output = git_command(&["push", "bypass-airlock", "master"], &working_path);
     assert!(
         output.status.success(),
         "Push to upstream (escape hatch) should work: {}",
@@ -796,7 +796,7 @@ fn test_repoint_tracking_branches_after_init() {
     assert!(push_output.status.success());
 
     let working_repo = git::discover_repo(&working_dir).unwrap();
-    git::rename_remote(&working_repo, "origin", "upstream").unwrap();
+    git::rename_remote(&working_repo, "origin", "bypass-airlock").unwrap();
 
     let tracking_output = git_command(
         &[
@@ -808,7 +808,7 @@ fn test_repoint_tracking_branches_after_init() {
     );
     assert_eq!(
         String::from_utf8_lossy(&tracking_output.stdout).trim(),
-        "upstream"
+        "bypass-airlock"
     );
 
     let gate_repo = git::create_bare_repo(&gate_dir).unwrap();
@@ -818,7 +818,7 @@ fn test_repoint_tracking_branches_after_init() {
 
     git::mirror_from_remote(&gate_dir, "origin").expect("Mirror should succeed");
     git::fetch(&working_dir, "origin").expect("Fetch from gate should succeed");
-    git::repoint_tracking_branches(&working_dir, "upstream", "origin")
+    git::repoint_tracking_branches(&working_dir, "bypass-airlock", "origin")
         .expect("Repoint should succeed");
 
     let tracking_output = git_command(

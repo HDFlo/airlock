@@ -35,11 +35,23 @@ fn run_with_paths(working_dir: &Path, paths: &AirlockPaths) -> Result<()> {
         .get_repo_by_path(&working_path)
         .context("Failed to query database")?;
 
-    if repo.is_none() && git::remote_exists(&working_repo, "upstream") {
-        warn!("Repository has 'upstream' remote but is not enrolled in database. Cleaning up...");
+    // Check for inconsistent state: bypass remote exists but repo isn't in database
+    let bypass_name = if git::remote_exists(&working_repo, init::BYPASS_REMOTE) {
+        Some(init::BYPASS_REMOTE)
+    } else if git::remote_exists(&working_repo, "upstream") {
+        Some("upstream") // Legacy name from older Airlock versions
+    } else {
+        None
+    };
 
-        let upstream_url =
-            git::get_remote_url(&working_repo, "upstream").context("Failed to get upstream URL")?;
+    if let (None, Some(bypass_name)) = (&repo, bypass_name) {
+        warn!(
+            "Repository has '{}' remote but is not enrolled in database. Cleaning up...",
+            bypass_name
+        );
+
+        let upstream_url = git::get_remote_url(&working_repo, bypass_name)
+            .context("Failed to get upstream URL")?;
 
         // Remove origin (which might point to a non-existent gate)
         if git::remote_exists(&working_repo, "origin") {
@@ -48,10 +60,10 @@ fn run_with_paths(working_dir: &Path, paths: &AirlockPaths) -> Result<()> {
             debug!("Removed origin remote");
         }
 
-        // Rename upstream back to origin
-        git::rename_remote(&working_repo, "upstream", "origin")
-            .context("Failed to rename upstream to origin")?;
-        debug!("Renamed upstream to origin");
+        // Rename bypass remote back to origin
+        git::rename_remote(&working_repo, bypass_name, "origin")
+            .context("Failed to rename {} to origin")?;
+        debug!("Renamed {} to origin", bypass_name);
 
         println!("Cleaned up inconsistent Airlock state.");
         println!();
@@ -174,7 +186,7 @@ mod tests {
         git::install_hooks(&gate_path).unwrap();
 
         // Rewire working repo remotes (simulate init)
-        git::rename_remote(&working_repo, "origin", "upstream").unwrap();
+        git::rename_remote(&working_repo, "origin", "bypass-airlock").unwrap();
         let gate_url = gate_path.to_string_lossy().to_string();
         git::add_remote(&working_repo, "origin", &gate_url).unwrap();
 
@@ -219,7 +231,7 @@ mod tests {
         assert!(db.get_repo_by_path(&canonical_path).unwrap().is_some());
 
         let pre_repo = Repository::open(&working_dir).unwrap();
-        assert!(git::remote_exists(&pre_repo, "upstream"));
+        assert!(git::remote_exists(&pre_repo, "bypass-airlock"));
 
         let result = run_with_paths(&working_dir, &paths);
         assert!(result.is_ok(), "eject failed: {:?}", result.err());
@@ -235,7 +247,7 @@ mod tests {
         let remote_url = remote_dir.to_string_lossy().to_string();
         assert_eq!(origin.url().unwrap(), remote_url);
 
-        assert!(!git::remote_exists(&post_repo, "upstream"));
+        assert!(!git::remote_exists(&post_repo, "bypass-airlock"));
     }
 
     #[test]
@@ -335,14 +347,14 @@ mod tests {
         let (working_repo, _repo_id) = setup_initialized_repo(&working_dir, &remote_dir, &paths);
 
         // Manually remove upstream remote to simulate inconsistent state
-        working_repo.remote_delete("upstream").unwrap();
+        working_repo.remote_delete("bypass-airlock").unwrap();
 
         let result = run_with_paths(&working_dir, &paths);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("No 'upstream' remote found"),
-            "Error should mention missing upstream: {}",
+            err_msg.contains("No 'bypass-airlock' remote found"),
+            "Error should mention missing bypass-airlock: {}",
             err_msg
         );
     }
@@ -452,9 +464,9 @@ mod tests {
         let working_repo = create_test_working_repo(&working_dir, &remote_url);
 
         // Manually set up inconsistent state: rename origin to upstream
-        git::rename_remote(&working_repo, "origin", "upstream").unwrap();
+        git::rename_remote(&working_repo, "origin", "bypass-airlock").unwrap();
 
-        assert!(git::remote_exists(&working_repo, "upstream"));
+        assert!(git::remote_exists(&working_repo, "bypass-airlock"));
         assert!(!git::remote_exists(&working_repo, "origin"));
 
         let paths = AirlockPaths::with_root(airlock_root);
@@ -473,7 +485,7 @@ mod tests {
 
         let post_repo = Repository::open(&working_dir).unwrap();
         assert!(git::remote_exists(&post_repo, "origin"));
-        assert!(!git::remote_exists(&post_repo, "upstream"));
+        assert!(!git::remote_exists(&post_repo, "bypass-airlock"));
 
         let origin = post_repo.find_remote("origin").unwrap();
         assert_eq!(origin.url().unwrap(), remote_url);
@@ -663,6 +675,6 @@ mod tests {
         let post_repo = Repository::open(&working_dir).unwrap();
         let origin = post_repo.find_remote("origin").unwrap();
         assert_eq!(origin.url().unwrap(), remote_url);
-        assert!(!git::remote_exists(&post_repo, "upstream"));
+        assert!(!git::remote_exists(&post_repo, "bypass-airlock"));
     }
 }

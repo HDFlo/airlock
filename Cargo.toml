@@ -78,6 +78,9 @@ rand = "0.8"
 # Regex for pattern matching
 regex = "1"
 
+# Terminal UI
+indicatif = "0.17"
+
 # Platform-specific
 libc = "0.2"
 
