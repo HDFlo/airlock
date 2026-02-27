@@ -48,7 +48,7 @@ git push origin feature-branch   # triggers the pipeline
 
 That's it. Airlock intercepts the push, runs your pipeline, and opens a **Push Request** in the desktop app for self-review. When you approve, it forwards to GitHub and creates a PR.
 
-To bypass Airlock at any time: `git push upstream main`
+To bypass Airlock at any time: `git push bypass-airlock main`
 
 ## What It Does
 

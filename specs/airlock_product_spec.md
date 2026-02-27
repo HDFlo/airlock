@@ -53,7 +53,7 @@ git push origin feature-branch
 
 1. Detects your current `origin` remote
 2. Creates a local bare repo as a "gate" (`~/.airlock/repos/<id>.git`)
-3. Renames `origin` to `upstream` (preserved as escape hatch)
+3. Renames `origin` to `bypass-airlock` (preserved as escape hatch)
 4. Sets `origin` to point to the local gate
 5. Registers the repo with the Airlock daemon
 6. Creates `.airlock/config.yml` with the default pipeline configuration
@@ -64,8 +64,8 @@ git push origin feature-branch
 $ git remote -v
 origin    ~/.airlock/repos/abc123.git (fetch)
 origin    ~/.airlock/repos/abc123.git (push)
-upstream  git@github.com:user/repo.git (fetch)
-upstream  git@github.com:user/repo.git (push)
+bypass-airlock  git@github.com:user/repo.git (fetch)
+bypass-airlock  git@github.com:user/repo.git (push)
 ```
 
 ### 2.2 Core Workflow
@@ -552,7 +552,7 @@ EXAMPLES:
     airlock show abc123             # Show details (supports prefix)
     airlock cancel abc123           # Cancel a stuck pipeline
     airlock doctor                  # Troubleshoot issues
-    git push upstream main          # Bypass Airlock (escape hatch)
+    git push bypass-airlock main    # Bypass Airlock (escape hatch)
 ```
 
 **GUI handles:**
@@ -721,7 +721,7 @@ storage:
 
 2. **Zero friction** — One command to set up. Push works the same as before.
 
-3. **Escape hatch always available** — `git push upstream` bypasses Airlock.
+3. **Escape hatch always available** — `git push bypass-airlock` bypasses Airlock.
 
 4. **Credentials untouched** — Airlock never copies or stores your SSH keys or tokens.
 

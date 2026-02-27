@@ -40,7 +40,7 @@ Airlock is a local-first Git proxy that transforms messy AI-generated code into 
 │  │  Desktop App │◀──────▶│  │  - Serves IPC API                  │ │    │
 │  │  (Tauri)     │  IPC   │  └──────────────┬─────────────────────┘ │    │
 │  └──────────────┘        │                 │                       │    │
-│                          │                 │ git push upstream     │    │
+│                          │                 │ git push bypass-airlock│    │
 │                          └─────────────────┼───────────────────────┘    │
 │                                            ▼                            │
 │                                   ┌──────────────┐                      │
@@ -121,14 +121,14 @@ When a user runs `airlock init` in their working repository:
 2. Generate repo ID from hash of origin URL + working path
 3. Create bare repo at `~/.airlock/repos/<id>.git`
 4. Add `origin` remote to bare repo pointing to original origin (GitHub)
-5. Rewire working repo: rename `origin` → `upstream`, add new `origin` → bare repo
+5. Rewire working repo: rename `origin` → `bypass-airlock`, add new `origin` → bare repo
 6. Install `pre-receive` and `post-receive` hooks in bare repo
 7. Trigger initial sync from origin
 8. Record repo in SQLite state database
 
 **Post-init remote layout:**
 
-- Working repo: `origin` → local bare repo, `upstream` → GitHub (escape hatch)
+- Working repo: `origin` → local bare repo, `bypass-airlock` → GitHub (escape hatch)
 - Bare repo (gate): `origin` → GitHub
 
 ### 3.3 Fetch Path
@@ -941,7 +941,7 @@ Minimal CLI — most interaction happens in the desktop app.
 | `airlock exec create-pr` | Create pull request on GitHub                |
 | `airlock exec agent`     | Run agent task with prompt (stdin supported) |
 
-**Bypass:** Users can always `git push upstream main` to skip Airlock entirely.
+**Bypass:** Users can always `git push bypass-airlock main` to skip Airlock entirely.
 
 ### 10.1 CLI as GUI Launcher
 
