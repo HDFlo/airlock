@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
 import { TransformWrapper, TransformComponent, useControls } from 'react-zoom-pan-pinch';
 import { ZoomIn, ZoomOut, Maximize } from 'lucide-react';
@@ -97,7 +97,6 @@ function parseSvgDimensions(svg: string): { width: number; height: number } | nu
 }
 
 export function MermaidDiagram({ chart }: { chart: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [svgContent, setSvgContent] = useState<string | null>(null);
 
@@ -125,14 +124,6 @@ export function MermaidDiagram({ chart }: { chart: string }) {
     };
   }, [chart]);
 
-  // Scale the diagram down so it fits within MAX_HEIGHT when first shown.
-  const initialScale = useMemo(() => {
-    if (!svgContent) return 1;
-    const dims = parseSvgDimensions(svgContent);
-    if (!dims || dims.height <= MAX_HEIGHT) return 1;
-    return Math.max(0.25, MAX_HEIGHT / dims.height);
-  }, [svgContent]);
-
   if (error) {
     return (
       <pre className="bg-terminal text-terminal-foreground overflow-auto rounded-md p-4">
@@ -145,17 +136,42 @@ export function MermaidDiagram({ chart }: { chart: string }) {
     return null;
   }
 
+  return <DiagramViewer svgContent={svgContent} />;
+}
+
+/** Renders the SVG inside a zoom/pan container, scaled to fit on first mount. */
+function DiagramViewer({ svgContent }: { svgContent: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [fitScale, setFitScale] = useState<number | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const containerWidth = el.clientWidth;
+    const dims = parseSvgDimensions(svgContent);
+    if (!dims) {
+      setFitScale(1);
+      return;
+    }
+    const pad = 32;
+    const scaleX = (containerWidth - pad) / dims.width;
+    const scaleY = MAX_HEIGHT / dims.height;
+    setFitScale(Math.min(scaleX, scaleY, 1));
+  }, [svgContent]);
+
   return (
-    <div className="border-border-subtle group relative my-4 overflow-hidden rounded-lg border">
-      <TransformWrapper initialScale={initialScale} minScale={0.1} maxScale={4} centerOnInit wheel={{ step: 0.1 }}>
-        <Controls />
-        <TransformComponent
-          wrapperStyle={{ width: '100%', height: `${MAX_HEIGHT}px` }}
-          contentStyle={{ display: 'flex', justifyContent: 'center' }}
-        >
-          <div ref={containerRef} dangerouslySetInnerHTML={{ __html: svgContent }} />
-        </TransformComponent>
-      </TransformWrapper>
+    <div ref={containerRef} className="border-border-subtle group relative my-4 overflow-hidden rounded-lg border">
+      {fitScale !== null && (
+        <TransformWrapper initialScale={fitScale} minScale={0.1} maxScale={4} centerOnInit wheel={{ step: 0.1 }}>
+          <Controls />
+          <TransformComponent
+            wrapperStyle={{ width: '100%', height: `${MAX_HEIGHT}px` }}
+            contentStyle={{ display: 'flex', justifyContent: 'center' }}
+          >
+            <div dangerouslySetInnerHTML={{ __html: svgContent }} />
+          </TransformComponent>
+        </TransformWrapper>
+      )}
     </div>
   );
 }
