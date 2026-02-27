@@ -119,8 +119,22 @@
       "name": "279589ca-a397-4066-9102-fce263cc0cbe.md",
       "path": "/Users/bakerxiao/.airlock/artifacts/85960af40743/fce62dbf-ad28-4f7e-b3c5-e60d956d73ad/content/279589ca-a397-4066-9102-fce263cc0cbe.md",
       "artifact_type": "file",
-      "size_bytes": 169,
+      "size_bytes": 1350,
       "created_at": 1771950833
+    },
+    {
+      "name": "test-results-aaa.md",
+      "path": "/Users/bakerxiao/.airlock/artifacts/85960af40743/fce62dbf-ad28-4f7e-b3c5-e60d956d73ad/content/test-results-aaa.md",
+      "artifact_type": "file",
+      "size_bytes": 920,
+      "created_at": 1771950870
+    },
+    {
+      "name": "push-result-bbb.md",
+      "path": "/Users/bakerxiao/.airlock/artifacts/85960af40743/fce62dbf-ad28-4f7e-b3c5-e60d956d73ad/content/push-result-bbb.md",
+      "artifact_type": "file",
+      "size_bytes": 210,
+      "created_at": 1771950879
     },
     {
       "name": "patch-fix-import.json",

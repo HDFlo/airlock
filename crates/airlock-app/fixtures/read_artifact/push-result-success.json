@@ -1,0 +1,7 @@
+{
+  "content": "---\ntitle: \"Push Result\"\n---\n\n# Push Successful\n\n**Branch:** `main`\n**Upstream:** `git@github.com-airlock:airlock-hq/airlock.git`\n**Commit:** `daad974c3a2d25ba4374faf9cd42a6de1cf2b5b2`\n",
+  "is_binary": false,
+  "total_size": 210,
+  "bytes_read": 210,
+  "offset": 0
+}

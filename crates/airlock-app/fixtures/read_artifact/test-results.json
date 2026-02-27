@@ -1,0 +1,7 @@
+{
+  "content": "---\ntitle: \"Test Results\"\n---\n\n**\u23ed\ufe0f Tests Skipped**\n\n## Summary\nValidated the changed file and ran the repository test suite, but full-suite results were flaky and not consistently reproducible; isolated reruns of failing tests passed, and failures appear unrelated to this UI change.\n\n## Details\nDiff scope is one frontend line change in `crates/airlock-app/src/components/MermaidDiagram.tsx` (`TransformWrapper` wheel step changed from `0.1` to `-0.1`). Ran `make test` multiple times (`cargo test --workspace --exclude airlock-app`). Full-suite runs were not stable: first failed at `commands::status::tests::test_check_daemon_status_not_responding`, another failed at `git::show::tests::test_show_file_works_with_bare_repo` (branch-name/env dependent `master` refspec), and another failed at `commands::doctor::tests::git_tests::test_e2e_doctor_checks_daemon_socket_exists_but_not_responding`. Re-ran each failing test individually with exact selectors; each passed in isolation, indicating flaky/environment-sensitive failures unrelated to this frontend change. No dedicated automated tests exist for this React component in this repo's current test targets.\n",
+  "is_binary": false,
+  "total_size": 920,
+  "bytes_read": 920,
+  "offset": 0
+}

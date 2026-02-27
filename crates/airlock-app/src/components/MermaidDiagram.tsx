@@ -4,12 +4,20 @@ import { TransformWrapper, TransformComponent, useControls } from 'react-zoom-pa
 import { ZoomIn, ZoomOut, Maximize } from 'lucide-react';
 
 let initialized = false;
-const COLOR_FOREGROUND = 'hsl(var(--foreground))';
-const COLOR_FOREGROUND_MUTED = 'hsl(var(--foreground-muted))';
-const COLOR_BORDER = 'hsl(var(--border))';
+
+/** Resolve a CSS custom property to an hsl() color string for mermaid (which cannot parse CSS var()). */
+function resolveColor(varName: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  // eslint-disable-next-line design-tokens/no-raw-colors -- intentionally resolving design tokens for mermaid
+  return value ? `hsl(${value})` : '#888';
+}
 
 function ensureInit() {
   if (!initialized) {
+    const foreground = resolveColor('--foreground');
+    const foregroundMuted = resolveColor('--foreground-muted');
+    const border = resolveColor('--border');
+
     mermaid.initialize({
       startOnLoad: false,
       theme: 'base',
@@ -19,23 +27,23 @@ function ensureInit() {
       themeVariables: {
         // Node defaults
         primaryColor: 'transparent',
-        primaryTextColor: COLOR_FOREGROUND,
-        primaryBorderColor: COLOR_FOREGROUND_MUTED,
+        primaryTextColor: foreground,
+        primaryBorderColor: foregroundMuted,
         // Lines & edges
-        lineColor: COLOR_FOREGROUND_MUTED,
+        lineColor: foregroundMuted,
         edgeLabelBackground: 'transparent',
         // Secondary / tertiary
         secondaryColor: 'transparent',
-        secondaryTextColor: COLOR_FOREGROUND,
-        secondaryBorderColor: COLOR_FOREGROUND_MUTED,
+        secondaryTextColor: foreground,
+        secondaryBorderColor: foregroundMuted,
         tertiaryColor: 'transparent',
-        tertiaryTextColor: COLOR_FOREGROUND,
-        tertiaryBorderColor: COLOR_FOREGROUND_MUTED,
+        tertiaryTextColor: foreground,
+        tertiaryBorderColor: foregroundMuted,
         // Text
-        textColor: COLOR_FOREGROUND,
+        textColor: foreground,
         // Subgraph
         clusterBkg: 'transparent',
-        clusterBorder: COLOR_BORDER,
+        clusterBorder: border,
         // Font
         fontSize: '14px',
       },
@@ -43,13 +51,13 @@ function ensureInit() {
         /* Transparent edge label backgrounds */
         .labelBkg { background-color: transparent !important; }
         .edgeLabel { background-color: transparent !important; }
-        .edgeLabel span { color: ${COLOR_FOREGROUND_MUTED} !important; font-size: 12px !important; }
+        .edgeLabel span { color: ${foregroundMuted} !important; font-size: 12px !important; }
         /* Node text */
-        .nodeLabel { color: ${COLOR_FOREGROUND} !important; }
+        .nodeLabel { color: ${foreground} !important; }
         /* Edge paths */
-        .flowchart-link { stroke: ${COLOR_BORDER} !important; }
+        .flowchart-link { stroke: ${border} !important; }
         /* Arrowheads */
-        marker[id^="flowchart-"] path { fill: ${COLOR_FOREGROUND_MUTED} !important; stroke: ${COLOR_FOREGROUND_MUTED} !important; }
+        marker[id^="flowchart-"] path { fill: ${foregroundMuted} !important; stroke: ${foregroundMuted} !important; }
       `,
     });
     initialized = true;
@@ -104,7 +112,13 @@ export function MermaidDiagram({ chart }: { chart: string }) {
   const [svgContent, setSvgContent] = useState<string | null>(null);
 
   useEffect(() => {
-    ensureInit();
+    try {
+      ensureInit();
+    } catch (err) {
+      setError(String(err));
+      return;
+    }
+
     const id = `mermaid-${++counter}`;
 
     let cancelled = false;
