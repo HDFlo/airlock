@@ -768,9 +768,9 @@ pub async fn handle_apply_patches(
         }
     };
 
-    // Get repo
-    let repo = match db.get_repo(&run.repo_id) {
-        Ok(Some(r)) => r,
+    // Validate repo exists
+    match db.get_repo(&run.repo_id) {
+        Ok(Some(_)) => {}
         Ok(None) => {
             return Response::error(
                 id,
@@ -803,20 +803,22 @@ pub async fn handle_apply_patches(
         }
     }
 
-    // Create a temporary worktree for applying patches
-    let worktree_path = ctx
-        .paths
-        .run_worktree(&run.repo_id, &format!("{}-patches", run.id));
-
-    if let Err(e) =
-        airlock_core::create_run_worktree(&repo.gate_path, &worktree_path, &run.head_sha)
-    {
+    // Find the actual run worktree (persistent or standard) and apply patches
+    // directly there, just like the freeze stage does. The pipeline is paused at
+    // an approval gate so no step is running in the worktree.
+    let persistent_wt = ctx.paths.repo_worktree(&run.repo_id);
+    let standard_wt = ctx.paths.run_worktree(&run.repo_id, &run.id);
+    let worktree_path = if persistent_wt.exists() {
+        persistent_wt
+    } else if standard_wt.exists() {
+        standard_wt
+    } else {
         return Response::error(
             id,
             error_codes::GIT_ERROR,
-            format!("Failed to create worktree: {}", e),
+            "No run worktree found — pipeline may not be running".to_string(),
         );
-    }
+    };
 
     // Configure git user in worktree
     let _ = std::process::Command::new("git")
@@ -947,9 +949,8 @@ pub async fn handle_apply_patches(
         }
     }
 
-    // If no patches applied, clean up and return
+    // If no patches applied, return
     if applied_count == 0 {
-        let _ = airlock_core::remove_worktree(&repo.gate_path, &worktree_path);
         let error_msg = if patch_errors.is_empty() {
             "No patches to apply".to_string()
         } else {
@@ -973,7 +974,6 @@ pub async fn handle_apply_patches(
         .output();
 
     if let Err(e) = stage_output {
-        let _ = airlock_core::remove_worktree(&repo.gate_path, &worktree_path);
         return Response::error(
             id,
             error_codes::GIT_ERROR,
@@ -993,7 +993,6 @@ pub async fn handle_apply_patches(
     };
 
     if !has_changes {
-        let _ = airlock_core::remove_worktree(&repo.gate_path, &worktree_path);
         let response = ApplyPatchesResult {
             run_id: params.run_id,
             success: true,
@@ -1017,7 +1016,6 @@ pub async fn handle_apply_patches(
     if let Ok(ref o) = commit_output {
         if !o.status.success() {
             let stderr = String::from_utf8_lossy(&o.stderr);
-            let _ = airlock_core::remove_worktree(&repo.gate_path, &worktree_path);
             return Response::error(
                 id,
                 error_codes::GIT_ERROR,
@@ -1025,7 +1023,6 @@ pub async fn handle_apply_patches(
             );
         }
     } else if let Err(e) = commit_output {
-        let _ = airlock_core::remove_worktree(&repo.gate_path, &worktree_path);
         return Response::error(
             id,
             error_codes::GIT_ERROR,
@@ -1042,7 +1039,6 @@ pub async fn handle_apply_patches(
     let new_sha = match sha_output {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => {
-            let _ = airlock_core::remove_worktree(&repo.gate_path, &worktree_path);
             return Response::error(
                 id,
                 error_codes::GIT_ERROR,
@@ -1057,11 +1053,6 @@ pub async fn handle_apply_patches(
         if let Err(e) = db.update_run_head_sha(&params.run_id, &new_sha) {
             warn!("Failed to update run head_sha: {}", e);
         }
-    }
-
-    // Clean up worktree
-    if let Err(e) = airlock_core::remove_worktree(&repo.gate_path, &worktree_path) {
-        warn!("Failed to remove patches worktree: {}", e);
     }
 
     // Emit RunUpdated event
@@ -1707,6 +1698,10 @@ mod tests {
             db.insert_run(&run).unwrap();
         }
 
+        // Create persistent worktree (simulating what the pipeline does)
+        let persistent_wt = ctx.paths.repo_worktree("repo1");
+        airlock_core::create_run_worktree(&gate_path, &persistent_wt, &head_sha).unwrap();
+
         // Create a patch artifact inside the artifacts dir
         let artifacts_dir = ctx.paths.artifacts_dir();
         let patches_dir = artifacts_dir.join("repo1").join("run1").join("patches");
@@ -1788,6 +1783,112 @@ mod tests {
         );
     }
 
+    /// When a persistent worktree exists, apply_patches should update its HEAD
+    /// so the push stage picks up the patch commit.
+    #[tokio::test]
+    async fn test_apply_patches_updates_persistent_worktree_head() {
+        let (temp, gate_path, head_sha) = setup_gate_repo();
+        let airlock_root = temp.path().join("airlock-root");
+        std::fs::create_dir_all(&airlock_root).unwrap();
+
+        let ctx = create_real_test_context(&airlock_root);
+
+        let repo = Repo {
+            id: "repo1".to_string(),
+            working_path: PathBuf::from("/tmp/unused"),
+            upstream_url: "git@github.com:user/repo.git".to_string(),
+            gate_path: gate_path.clone(),
+            last_sync: None,
+            created_at: 1704067200,
+        };
+
+        let run = Run {
+            id: "run1".to_string(),
+            repo_id: "repo1".to_string(),
+            ref_updates: vec![RefUpdate {
+                ref_name: "refs/heads/main".to_string(),
+                old_sha: "0000000".to_string(),
+                new_sha: head_sha.clone(),
+            }],
+            error: None,
+            superseded: false,
+            created_at: 1704067200,
+            branch: "main".to_string(),
+            base_sha: "0000000".to_string(),
+            head_sha: head_sha.clone(),
+            current_step: None,
+            updated_at: 1704067200,
+            workflow_file: "main.yml".to_string(),
+            workflow_name: None,
+        };
+
+        {
+            let db = ctx.db.lock().await;
+            db.insert_repo(&repo).unwrap();
+            db.insert_run(&run).unwrap();
+        }
+
+        // Create a persistent worktree (simulating what the pipeline does)
+        let persistent_wt = ctx.paths.repo_worktree("repo1");
+        airlock_core::create_run_worktree(&gate_path, &persistent_wt, &head_sha).unwrap();
+
+        // Verify the worktree HEAD matches the original SHA
+        let wt_head_before = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&persistent_wt)
+            .output()
+            .unwrap();
+        let wt_head_before = String::from_utf8_lossy(&wt_head_before.stdout)
+            .trim()
+            .to_string();
+        assert_eq!(wt_head_before, head_sha);
+
+        // Create a patch artifact
+        let artifacts_dir = ctx.paths.artifacts_dir();
+        let patches_dir = artifacts_dir.join("repo1").join("run1").join("patches");
+        std::fs::create_dir_all(&patches_dir).unwrap();
+
+        let patch_json = r#"{
+            "title": "Fix typo",
+            "explanation": "Fix a typo in file.txt",
+            "diff": "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-initial content\n+fixed content\n"
+        }"#;
+        let patch_path = patches_dir.join("patch1.json");
+        std::fs::write(&patch_path, patch_json).unwrap();
+
+        // Apply the patch
+        let params = serde_json::json!({
+            "run_id": "run1",
+            "patch_paths": [patch_path.to_str().unwrap()]
+        });
+        let response = handle_apply_patches(ctx.clone(), params, serde_json::json!(1)).await;
+
+        let result: ApplyPatchesResult = serde_json::from_value(response.result.unwrap()).unwrap();
+        assert!(result.success);
+        let new_sha = result.new_head_sha.unwrap();
+
+        // Verify the persistent worktree HEAD was updated to the new SHA
+        let wt_head_after = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&persistent_wt)
+            .output()
+            .unwrap();
+        let wt_head_after = String::from_utf8_lossy(&wt_head_after.stdout)
+            .trim()
+            .to_string();
+        assert_eq!(
+            wt_head_after, new_sha,
+            "Persistent worktree HEAD should be updated to the new patch commit"
+        );
+
+        // Verify the file content in the worktree was updated
+        let content = std::fs::read_to_string(persistent_wt.join("file.txt")).unwrap();
+        assert_eq!(
+            content, "fixed content\n",
+            "Worktree file should reflect the applied patch"
+        );
+    }
+
     #[tokio::test]
     async fn test_apply_patches_bad_diff_returns_patch_error() {
         let (temp, gate_path, head_sha) = setup_gate_repo();
@@ -1830,6 +1931,10 @@ mod tests {
             db.insert_repo(&repo).unwrap();
             db.insert_run(&run).unwrap();
         }
+
+        // Create persistent worktree (simulating what the pipeline does)
+        let persistent_wt = ctx.paths.repo_worktree("repo1");
+        airlock_core::create_run_worktree(&gate_path, &persistent_wt, &head_sha).unwrap();
 
         // Create a patch with garbage diff that won't apply
         let artifacts_dir = ctx.paths.artifacts_dir();
@@ -1909,6 +2014,10 @@ mod tests {
             db.insert_repo(&repo).unwrap();
             db.insert_run(&run).unwrap();
         }
+
+        // Create persistent worktree (simulating what the pipeline does)
+        let persistent_wt = ctx.paths.repo_worktree("repo1");
+        airlock_core::create_run_worktree(&gate_path, &persistent_wt, &head_sha).unwrap();
 
         let artifacts_dir = ctx.paths.artifacts_dir();
         let patches_dir = artifacts_dir.join("repo1").join("run1").join("patches");
