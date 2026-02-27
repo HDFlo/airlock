@@ -63,6 +63,8 @@ run: |
   Use subgraph to express high level system architecture when appropriate. No need to label a subgraph with unchanged/added/updated/removed.
 
   Define each subgraph with a short ID and a double-quoted label like this: \`subgraph my_subgraph_id[\"My Subgraph Label\"]\`
+  Always add \`direction TB\` as the first line inside every subgraph to ensure vertical layout.
+  Define edges between nodes inside the subgraph where they belong, not outside it.
 
   Style subgraphs with gray dashed rounded borders by adding this class and applying it to the subgraph IDs:
   \`\`\`
@@ -86,7 +88,7 @@ run: |
   # Write as content artifact for display in UI (text summary + mermaid diagram)
   {
     printf "# %s\n\n%s\n\n" "$TITLE" "$BODY"
-    printf "## Component Diagram\n\n"
+    printf "## Diagram\n\n"
     printf '```mermaid\n%s\n```\n' "$DIAGRAM"
   } | airlock artifact content --title "Description"
 

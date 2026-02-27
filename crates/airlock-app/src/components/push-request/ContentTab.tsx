@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { useSearchParams } from 'react-router-dom';
 import { ContentSidebar } from '@/components/ContentSidebar';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@airlock-hq/design-system/react';
+import { MermaidDiagram } from '@/components/MermaidDiagram';
 
 interface ContentArtifact {
   name: string;
@@ -145,23 +146,36 @@ function ContentCard({ artifact }: { artifact: ContentArtifact }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          pre: ({ children, ...props }) => (
-            <pre
-              className={cn(
-                'border-border-subtle bg-surface-elevated overflow-auto rounded-md border p-4',
-                'text-foreground text-small font-mono',
-                '[&_code]:bg-transparent [&_code]:p-0 [&_code]:text-[length:inherit] [&_code]:text-inherit'
-              )}
-              {...props}
-            >
-              {children}
-            </pre>
-          ),
-          code: ({ children, className, ...props }) => (
-            <code className={cn('bg-surface text-small rounded px-1.5 py-0.5', className)} {...props}>
-              {children}
-            </code>
-          ),
+          pre: ({ children, ...props }) => {
+            // If the child is a MermaidDiagram, render it without the pre wrapper
+            const child = Array.isArray(children) ? children[0] : children;
+            if (child && typeof child === 'object' && 'type' in child && child.type === MermaidDiagram) {
+              return <>{children}</>;
+            }
+            return (
+              <pre
+                className={cn(
+                  'border-border-subtle bg-surface-elevated overflow-auto rounded-md border p-4',
+                  'text-foreground text-small font-mono',
+                  '[&_code]:bg-transparent [&_code]:p-0 [&_code]:text-[length:inherit] [&_code]:text-inherit'
+                )}
+                {...props}
+              >
+                {children}
+              </pre>
+            );
+          },
+          code: ({ children, className, ...props }) => {
+            if (className?.includes('language-mermaid')) {
+              const chart = String(children).replace(/\n$/, '');
+              return <MermaidDiagram chart={chart} />;
+            }
+            return (
+              <code className={cn('bg-surface text-small rounded px-1.5 py-0.5', className)} {...props}>
+                {children}
+              </code>
+            );
+          },
         }}
       >
         {artifact.content}

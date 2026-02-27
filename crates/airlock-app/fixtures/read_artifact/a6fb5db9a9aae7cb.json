@@ -1,7 +1,7 @@
 {
-  "content": "---\ntitle: \"PR Description\"\n---\n\n## Changes in feature/add-database\n\nThis push contains changes ready for review.\n\n**Base commit:** `ce19767`\n**Head commit:** `1bf5445`\n",
+  "content": "---\ntitle: \"PR Description\"\n---\n\n## Changes in feature/add-database\n\nThis push contains changes ready for review.\n\n**Base commit:** `ce19767`\n**Head commit:** `1bf5445`\n\n## Component Diagram\n\n```mermaid\nflowchart TD\n    subgraph push_flow[\"Push Recovery Flow\"]\n        direction TB\n        startup_hooks[\"Daemon hook re-install on startup\"] -- ensures --> post_receive[\"Post-receive hook\"]\n        post_receive -- uses --> marker_helpers[\"Marker ref helpers in git::refs\"]\n        marker_helpers -- creates --> markers[\"Push marker refs refs/airlock/pushed/*\"]\n        markers -- filters input for --> detect_missed[\"detect_missed_pushes_for_repo\"]\n        detect_missed -- delegates to --> coalesced[\"process_coalesced_push\"]\n        coalesced -- creates --> run_create[\"Pipeline run creation\"]\n    end\n```\n",
   "is_binary": false,
-  "total_size": 169,
-  "bytes_read": 169,
+  "total_size": 700,
+  "bytes_read": 700,
   "offset": 0
 }

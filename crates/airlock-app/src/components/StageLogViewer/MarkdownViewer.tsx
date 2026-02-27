@@ -4,6 +4,7 @@ import type { ArtifactInfo } from '@/hooks/use-daemon';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useArtifactLoader } from './hooks';
+import { MermaidDiagram } from '@/components/MermaidDiagram';
 
 interface MarkdownViewerProps {
   artifact: ArtifactInfo;
@@ -44,13 +45,23 @@ export function MarkdownViewer({ artifact, isActive }: MarkdownViewerProps) {
         remarkPlugins={[remarkGfm]}
         components={{
           // Style code blocks with terminal background
-          pre: ({ children, ...props }) => (
-            <pre className={cn('overflow-auto rounded-md p-4', 'bg-terminal text-terminal-foreground')} {...props}>
-              {children}
-            </pre>
-          ),
+          pre: ({ children, ...props }) => {
+            const child = Array.isArray(children) ? children[0] : children;
+            if (child && typeof child === 'object' && 'type' in child && child.type === MermaidDiagram) {
+              return <>{children}</>;
+            }
+            return (
+              <pre className={cn('overflow-auto rounded-md p-4', 'bg-terminal text-terminal-foreground')} {...props}>
+                {children}
+              </pre>
+            );
+          },
           // Style inline code
           code: ({ children, className, ...props }) => {
+            if (className?.includes('language-mermaid')) {
+              const chart = String(children).replace(/\n$/, '');
+              return <MermaidDiagram chart={chart} />;
+            }
             // Check if this is a code block (has language class) vs inline code
             const isBlock = className?.includes('language-');
             if (isBlock) {

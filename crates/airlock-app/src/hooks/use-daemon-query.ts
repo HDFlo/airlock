@@ -30,12 +30,20 @@ export function useDaemonQuery<T>(
   const resetOnErrorRef = useRef(resetOnError);
   const defaultValueRef = useRef(defaultValue);
 
+  const lastJsonRef = useRef<string>('');
+
   const refresh = useCallback(async () => {
     try {
       if (!hasLoaded.current) setLoading(true);
       const result = await fetcher();
       if (result !== undefined) {
-        setData(result);
+        // Only update state when data actually changed to avoid unnecessary re-renders
+        // from polling returning identical results.
+        const json = JSON.stringify(result);
+        if (json !== lastJsonRef.current) {
+          lastJsonRef.current = json;
+          setData(result);
+        }
         setError(null);
         hasLoaded.current = true;
       }
