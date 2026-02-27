@@ -125,12 +125,20 @@ export function RunDetail() {
     ).length;
   }, [detail?.artifacts]);
 
+  // Count content files for tab badge
+  const contentCount = useMemo(() => {
+    if (!detail?.artifacts) return 0;
+    return detail.artifacts.filter(
+      (a) => a.artifact_type === 'file' && a.path.includes('/content/') && a.path.endsWith('.md')
+    ).length;
+  }, [detail?.artifacts]);
+
   // Store active tab in URL search params so it survives refreshes and is shareable
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
 
   // Compute the active tab: use URL param if valid, otherwise default to overview
-  const validTabs = ['overview', 'content', 'activity', 'changes', 'patches'];
+  const validTabs = ['overview', 'changes', 'content', 'patches', 'activity'];
   const activeTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'overview';
 
   const setActiveTab = useCallback(
@@ -243,17 +251,16 @@ export function RunDetail() {
                 <FileText className="mr-2 h-4 w-4" />
                 Overview
               </TabsTrigger>
-              <TabsTrigger variant="line" value="content">
-                <BookOpen className="mr-2 h-4 w-4" />
-                Content
-              </TabsTrigger>
-              <TabsTrigger variant="line" value="activity">
-                <Activity className="mr-2 h-4 w-4" />
-                Activity
-              </TabsTrigger>
               <TabsTrigger variant="line" value="changes">
                 <FileDiff className="mr-2 h-4 w-4" />
                 Changes
+              </TabsTrigger>
+              <TabsTrigger variant="line" value="content">
+                <BookOpen className="mr-2 h-4 w-4" />
+                Content
+                {contentCount > 0 && (
+                  <span className="bg-signal/20 text-micro ml-2 rounded-full px-2 py-0.5">{contentCount}</span>
+                )}
               </TabsTrigger>
               <TabsTrigger variant="line" value="patches">
                 <Layers className="mr-2 h-4 w-4" />
@@ -261,6 +268,10 @@ export function RunDetail() {
                 {pendingPatchCount > 0 && (
                   <span className="bg-signal/20 text-micro ml-2 rounded-full px-2 py-0.5">{pendingPatchCount}</span>
                 )}
+              </TabsTrigger>
+              <TabsTrigger variant="line" value="activity">
+                <Activity className="mr-2 h-4 w-4" />
+                Activity
               </TabsTrigger>
             </TabsList>
 
