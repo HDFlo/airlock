@@ -154,6 +154,20 @@ fn detect_shell_from_system() -> Option<String> {
     None
 }
 
+/// Check whether a shell supports the `-i` (interactive) flag with `-c`.
+///
+/// Shells like `bash` and `zsh` keep some PATH/env setup in their
+/// interactive-only config files (`~/.bashrc`, `~/.zshrc`). Without `-i`,
+/// `shell -l -c …` won't source those files, so tools installed via nvm,
+/// fnm, rustup, etc. may be missing from PATH.
+///
+/// We allowlist known shells rather than passing `-i` unconditionally,
+/// because other shells (fish, nu, etc.) may not accept the same flags.
+fn shell_supports_interactive(shell: &str) -> bool {
+    let basename = shell.rsplit('/').next().unwrap_or(shell);
+    matches!(basename, "bash" | "zsh")
+}
+
 /// Resolve the user's full PATH by spawning their login shell.
 ///
 /// Captures the PATH as the user would see it in a terminal session,
@@ -163,10 +177,18 @@ fn resolve_user_path() -> &'static str {
     USER_PATH.get_or_init(|| {
         let shell = get_user_login_shell();
 
-        debug!("Resolving user PATH via '{} -l -c echo $PATH'", shell);
+        // Use -i (interactive) for shells that support it so that
+        // interactive-only config files (~/.bashrc, ~/.zshrc) are sourced.
+        let args: Vec<&str> = if shell_supports_interactive(shell) {
+            debug!("Resolving user PATH via '{} -l -i -c echo $PATH'", shell);
+            vec!["-l", "-i", "-c", "echo $PATH"]
+        } else {
+            debug!("Resolving user PATH via '{} -l -c echo $PATH'", shell);
+            vec!["-l", "-c", "echo $PATH"]
+        };
 
         let result = std::process::Command::new(shell)
-            .args(["-l", "-c", "echo $PATH"])
+            .args(&args)
             .output();
 
         match result {
@@ -523,14 +545,28 @@ pub async fn execute_stage_command_with_streaming(
     // Determine shell to use.
     // All shells run with -l (login) so that shell profiles are sourced,
     // providing env vars beyond PATH (API keys, version managers, etc.).
+    // For bash/zsh we also pass -i (interactive) so that ~/.bashrc/~/.zshrc
+    // are sourced — many tools (nvm, fnm, etc.) add PATH entries there.
     let (shell_cmd, shell_args) = match stage.shell.as_deref() {
         None => {
             // Default: use user's login shell (detected from system if $SHELL
             // is not set, which is typical for daemons).
             let user_shell = get_user_login_shell().to_string();
-            (user_shell, vec!["-l".to_string(), "-c".to_string()])
+            let args = if shell_supports_interactive(&user_shell) {
+                vec!["-l".to_string(), "-i".to_string(), "-c".to_string()]
+            } else {
+                vec!["-l".to_string(), "-c".to_string()]
+            };
+            (user_shell, args)
         }
-        Some(shell) => (shell.to_string(), vec!["-l".to_string(), "-c".to_string()]),
+        Some(shell) => {
+            let args = if shell_supports_interactive(shell) {
+                vec!["-l".to_string(), "-i".to_string(), "-c".to_string()]
+            } else {
+                vec!["-l".to_string(), "-c".to_string()]
+            };
+            (shell.to_string(), args)
+        }
     };
 
     let start_time = Instant::now();
