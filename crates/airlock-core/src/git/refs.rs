@@ -149,3 +149,61 @@ pub fn is_ancestor_of(repo_path: &Path, ancestor: &str, descendant: &str) -> Res
     )?;
     Ok(output.status.success())
 }
+
+/// Get the push marker ref name for a branch.
+///
+/// Returns `refs/airlock/pushed/<branch>` which tracks that a user pushed
+/// this branch through the gate's post-receive hook.
+pub fn push_marker_ref(branch: &str) -> String {
+    format!("refs/airlock/pushed/{}", branch)
+}
+
+/// List all push marker refs in a gate repo.
+///
+/// Returns `Vec<(branch_name, sha)>` for each `refs/airlock/pushed/*` ref.
+pub fn list_push_markers(gate_path: &Path) -> Result<Vec<(String, String)>> {
+    let output = run_git_unchecked(
+        gate_path,
+        &[
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            "refs/airlock/pushed/",
+        ],
+        "for-each-ref refs/airlock/pushed/",
+    )?;
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut markers = Vec::new();
+
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(2, ' ').collect();
+        if parts.len() != 2 {
+            continue;
+        }
+        if let Some(branch) = parts[0].strip_prefix("refs/airlock/pushed/") {
+            markers.push((branch.to_string(), parts[1].to_string()));
+        }
+    }
+
+    Ok(markers)
+}
+
+/// Delete push marker refs for the given branches.
+pub fn cleanup_push_markers(gate_path: &Path, branches: &[&str]) {
+    for branch in branches {
+        let ref_name = push_marker_ref(branch);
+        if let Err(e) = delete_ref(gate_path, &ref_name) {
+            tracing::warn!("Failed to clean up push marker ref {}: {}", ref_name, e);
+        } else {
+            tracing::debug!("Cleaned up push marker ref: {}", ref_name);
+        }
+    }
+}

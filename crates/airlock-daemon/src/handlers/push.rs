@@ -281,6 +281,16 @@ pub async fn process_coalesced_push(
             .collect()
     };
 
+    // Collect branch names from pipeline updates for marker cleanup
+    let pushed_branches: Vec<String> = pipeline_updates
+        .iter()
+        .filter_map(|u| {
+            u.ref_name
+                .strip_prefix("refs/heads/")
+                .map(|b| b.to_string())
+        })
+        .collect();
+
     for (run, _workflow_file) in workflow_runs {
         {
             let db = ctx.db.lock().await;
@@ -331,6 +341,12 @@ pub async fn process_coalesced_push(
             execute_pipeline(ctx.clone(), run, repo, permit.token).await;
             // permit is dropped here, releasing the slot for the next run
         });
+    }
+
+    // Clean up push marker refs now that runs have been created
+    if !pushed_branches.is_empty() {
+        let branch_refs: Vec<&str> = pushed_branches.iter().map(|s| s.as_str()).collect();
+        git::cleanup_push_markers(&repo.gate_path, &branch_refs);
     }
 }
 
@@ -429,38 +445,44 @@ pub async fn detect_and_process_missed_pushes(ctx: Arc<HandlerContext>) {
 
 /// Detect missed pushes for a single repo.
 ///
+/// Only considers branches with `refs/airlock/pushed/*` marker refs, which are
+/// created by the post-receive hook. This prevents sync-created branches
+/// (e.g., `release-please--branches--main`) from being incorrectly treated
+/// as missed pushes.
+///
 /// Returns the number of missed pushes detected and queued.
 async fn detect_missed_pushes_for_repo(
     ctx: &Arc<HandlerContext>,
     repo: &Repo,
 ) -> Result<usize, String> {
-    // Open the gate repo
-    let gate_repo =
-        git::open_repo(&repo.gate_path).map_err(|e| format!("Failed to open gate repo: {}", e))?;
+    // List push marker refs — only branches the user actually pushed
+    let markers = git::list_push_markers(&repo.gate_path)
+        .map_err(|e| format!("Failed to list push markers: {}", e))?;
 
-    // Get all branch refs from the gate
+    if markers.is_empty() {
+        return Ok(0);
+    }
+
     let mut missed_refs: Vec<RefUpdate> = Vec::new();
+    let mut processed_branches: Vec<String> = Vec::new();
 
-    // Iterate over all references in the gate
-    let refs = gate_repo
-        .references()
-        .map_err(|e| format!("Failed to list gate refs: {}", e))?;
+    for (branch, _marker_sha) in &markers {
+        let ref_name = format!("refs/heads/{}", branch);
 
-    for reference in refs.flatten() {
-        let ref_name = match reference.name() {
-            Some(name) => name.to_string(),
-            None => continue,
-        };
-
-        // Only process branch refs (refs/heads/*)
-        if !ref_name.starts_with("refs/heads/") {
-            continue;
-        }
-
-        // Get the current commit SHA
-        let gate_sha = match reference.peel_to_commit() {
-            Ok(commit) => commit.id().to_string(),
-            Err(_) => continue,
+        // Resolve the current gate SHA for this branch
+        let gate_sha = match git::resolve_ref(&repo.gate_path, &ref_name)
+            .map_err(|e| format!("Failed to resolve ref {}: {}", ref_name, e))?
+        {
+            Some(sha) => sha,
+            None => {
+                // Branch was deleted after marker was created — clean up marker
+                debug!(
+                    "Branch {} no longer exists in gate, cleaning up marker",
+                    branch
+                );
+                processed_branches.push(branch.clone());
+                continue;
+            }
         };
 
         // Check if there's already an active run covering this ref
@@ -477,7 +499,8 @@ async fn detect_missed_pushes_for_repo(
         };
 
         if has_active_run {
-            // Already being processed
+            // Already being processed — clean up marker
+            processed_branches.push(branch.clone());
             continue;
         }
 
@@ -486,7 +509,6 @@ async fn detect_missed_pushes_for_repo(
             let db = ctx.db.lock().await;
             match db.list_runs(&repo.id, Some(50)) {
                 Ok(runs) => runs.iter().any(|run| {
-                    // Check if this run processed this ref to this SHA
                     let ref_matches = run
                         .ref_updates
                         .iter()
@@ -502,9 +524,7 @@ async fn detect_missed_pushes_for_repo(
                     if step_completed {
                         return true;
                     }
-                    // Also check job-based completion as defense in depth:
-                    // a run where all jobs reached final status (Failed/Passed/Skipped)
-                    // should not be re-triggered even if some steps were left Pending
+                    // Also check job-based completion as defense in depth
                     match db.get_job_results_for_run(&run.id) {
                         Ok(jobs) => run.is_completed_from_jobs(&jobs),
                         Err(_) => false,
@@ -515,18 +535,14 @@ async fn detect_missed_pushes_for_repo(
         };
 
         if already_processed {
-            // Already processed in a previous run
+            // Already processed — clean up marker
+            processed_branches.push(branch.clone());
             continue;
         }
 
         // Get the origin SHA for comparison
-        // The origin remote in the gate should have the same branch
-        let upstream_ref_name = format!("refs/remotes/origin/{}", &ref_name[11..]); // Strip "refs/heads/"
-        let upstream_sha = gate_repo
-            .find_reference(&upstream_ref_name)
-            .ok()
-            .and_then(|r| r.peel_to_commit().ok())
-            .map(|c| c.id().to_string());
+        let upstream_ref_name = format!("refs/remotes/origin/{}", branch);
+        let upstream_sha = git::resolve_ref(&repo.gate_path, &upstream_ref_name).unwrap_or(None);
 
         // If gate SHA differs from upstream SHA (or upstream doesn't have it),
         // we have a missed push
@@ -536,10 +552,8 @@ async fn detect_missed_pushes_for_repo(
         };
 
         if is_missed {
-            let old_sha = upstream_sha.unwrap_or_else(|| {
-                // For new branches, use the zero SHA or try to find merge-base
-                "0000000000000000000000000000000000000000".to_string()
-            });
+            let old_sha = upstream_sha
+                .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_string());
 
             info!(
                 "Detected missed push for repo {}: {} ({} -> {})",
@@ -554,7 +568,16 @@ async fn detect_missed_pushes_for_repo(
                 old_sha,
                 new_sha: gate_sha,
             });
+        } else {
+            // Gate matches upstream — no missed push, clean up stale marker
+            processed_branches.push(branch.clone());
         }
+    }
+
+    // Clean up markers for branches we've already handled
+    if !processed_branches.is_empty() {
+        let branch_refs: Vec<&str> = processed_branches.iter().map(|s| s.as_str()).collect();
+        git::cleanup_push_markers(&repo.gate_path, &branch_refs);
     }
 
     if missed_refs.is_empty() {
@@ -563,7 +586,8 @@ async fn detect_missed_pushes_for_repo(
 
     let count = missed_refs.len();
 
-    // Process the missed push (similar to process_coalesced_push)
+    // Process the missed push — markers for these branches will be cleaned up
+    // after runs are created in process_coalesced_push
     process_coalesced_push(ctx.clone(), &repo.id, missed_refs).await;
 
     Ok(count)
@@ -1105,6 +1129,10 @@ mod tests {
         })
         .unwrap();
 
+        // Create a push marker ref so detect_missed_pushes sees this branch.
+        // Without a marker, the new detection logic would skip it entirely.
+        git::update_ref(&gate_path, &git::push_marker_ref("main"), &head_sha).unwrap();
+
         // Now run the actual detect_and_process_missed_pushes
         let (shutdown_tx, _) = watch::channel(false);
         let ctx = Arc::new(HandlerContext::new(paths, db, shutdown_tx));
@@ -1125,6 +1153,13 @@ mod tests {
             runs.len()
         );
         assert_eq!(runs[0].id, "run-failed");
+
+        // Verify the marker ref was cleaned up (already-processed branch)
+        let markers = git::list_push_markers(&gate_path).unwrap();
+        assert!(
+            markers.is_empty(),
+            "Push marker should be cleaned up after detection"
+        );
     }
 
     /// E2E: process_coalesced_push creates a protective ref for the run.
@@ -1420,5 +1455,183 @@ mod tests {
             "Run2 should use upstream SHA as base (not commit1), \
              so the diff covers all un-forwarded commits"
         );
+    }
+
+    #[test]
+    fn test_push_marker_ref_format() {
+        assert_eq!(git::push_marker_ref("main"), "refs/airlock/pushed/main");
+        assert_eq!(
+            git::push_marker_ref("feature/my-branch"),
+            "refs/airlock/pushed/feature/my-branch"
+        );
+    }
+
+    #[test]
+    fn test_list_and_cleanup_push_markers() {
+        let temp_dir = TempDir::new().unwrap();
+        let gate_path = temp_dir.path().join("gate.git");
+        let gate_repo = git2::Repository::init_bare(&gate_path).unwrap();
+
+        // Create a commit so we have a valid SHA to reference
+        let sha = create_bare_repo_commit(&gate_repo);
+
+        // Create marker refs
+        git::update_ref(&gate_path, "refs/airlock/pushed/main", &sha).unwrap();
+        git::update_ref(&gate_path, "refs/airlock/pushed/feature/x", &sha).unwrap();
+
+        // List markers
+        let markers = git::list_push_markers(&gate_path).unwrap();
+        assert_eq!(markers.len(), 2);
+
+        let branches: Vec<&str> = markers.iter().map(|(b, _)| b.as_str()).collect();
+        assert!(branches.contains(&"main"));
+        assert!(branches.contains(&"feature/x"));
+
+        // Clean up one marker
+        git::cleanup_push_markers(&gate_path, &["main"]);
+
+        let markers = git::list_push_markers(&gate_path).unwrap();
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].0, "feature/x");
+
+        // Clean up the other
+        git::cleanup_push_markers(&gate_path, &["feature/x"]);
+        let markers = git::list_push_markers(&gate_path).unwrap();
+        assert!(markers.is_empty());
+    }
+
+    /// Integration test: detect_missed_pushes only picks up branches with
+    /// push marker refs, ignoring branches created by sync.
+    #[tokio::test]
+    async fn test_detect_missed_pushes_only_considers_marker_branches() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join("airlock");
+        std::fs::create_dir_all(&root).unwrap();
+
+        let paths = AirlockPaths::with_root(root);
+
+        // Create a real bare gate repo
+        let gate_path = temp_dir.path().join("gate.git");
+        let gate_repo = git2::Repository::init_bare(&gate_path).unwrap();
+        gate_repo.remote("origin", "file:///dev/null").unwrap();
+
+        // Create a commit on refs/heads/main (user-pushed branch)
+        let head_sha = create_bare_repo_commit(&gate_repo);
+
+        // Create a sync branch (no marker ref) — simulates smart_sync_from_remote
+        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+        let tree_id = gate_repo.treebuilder(None).unwrap().write().unwrap();
+        let tree = gate_repo.find_tree(tree_id).unwrap();
+        let sync_oid = gate_repo
+            .commit(
+                Some("refs/heads/release-please--branches--main"),
+                &sig,
+                &sig,
+                "sync commit",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        let _sync_sha = sync_oid.to_string();
+
+        // Only create a push marker for "main", NOT for the sync branch
+        git::update_ref(&gate_path, &git::push_marker_ref("main"), &head_sha).unwrap();
+
+        // Set up database
+        let db = Database::open_in_memory().unwrap();
+        let repo = Repo {
+            id: "repo-marker".to_string(),
+            working_path: temp_dir.path().to_path_buf(),
+            upstream_url: "file:///dev/null".to_string(),
+            gate_path: gate_path.clone(),
+            last_sync: None,
+            created_at: 1704067200,
+        };
+        db.insert_repo(&repo).unwrap();
+
+        let (shutdown_tx, _) = watch::channel(false);
+        let ctx = Arc::new(HandlerContext::new(paths, db, shutdown_tx));
+
+        detect_and_process_missed_pushes(ctx.clone()).await;
+
+        // Verify: only one run created (for "main"), none for sync branch
+        let runs = {
+            let db = ctx.db.lock().await;
+            db.list_runs("repo-marker", None).unwrap()
+        };
+        assert_eq!(
+            runs.len(),
+            1,
+            "Only the marker-tagged branch should trigger a run"
+        );
+        assert_eq!(runs[0].branch, "main");
+
+        // Verify marker was NOT cleaned up (the run was created, so cleanup
+        // happens inside process_coalesced_push)
+        // Actually, process_coalesced_push does clean up markers after creating runs.
+        let markers = git::list_push_markers(&gate_path).unwrap();
+        assert!(
+            markers.is_empty(),
+            "Push marker should be cleaned up after run creation"
+        );
+    }
+
+    /// Integration test: process_coalesced_push cleans up marker refs.
+    #[tokio::test]
+    async fn test_process_coalesced_push_cleans_up_markers() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join("airlock");
+        std::fs::create_dir_all(&root).unwrap();
+
+        let paths = AirlockPaths::with_root(root);
+
+        let gate_path = temp_dir.path().join("gate.git");
+        let gate_repo = git2::Repository::init_bare(&gate_path).unwrap();
+        gate_repo.remote("origin", "file:///dev/null").unwrap();
+
+        let head_sha = create_bare_repo_commit(&gate_repo);
+
+        let db = Database::open_in_memory().unwrap();
+        let repo = Repo {
+            id: "repo-cleanup".to_string(),
+            working_path: temp_dir.path().to_path_buf(),
+            upstream_url: "file:///dev/null".to_string(),
+            gate_path: gate_path.clone(),
+            last_sync: None,
+            created_at: 1704067200,
+        };
+        db.insert_repo(&repo).unwrap();
+
+        let (shutdown_tx, _) = watch::channel(false);
+        let ctx = Arc::new(HandlerContext::new(paths, db, shutdown_tx));
+
+        // Create a push marker ref (simulating what the hook does)
+        git::update_ref(&gate_path, &git::push_marker_ref("main"), &head_sha).unwrap();
+
+        // Verify marker exists
+        let markers = git::list_push_markers(&gate_path).unwrap();
+        assert_eq!(markers.len(), 1);
+
+        // Process the push
+        let ref_updates = vec![RefUpdate {
+            ref_name: "refs/heads/main".to_string(),
+            old_sha: "0000000000000000000000000000000000000000".to_string(),
+            new_sha: head_sha.clone(),
+        }];
+        process_coalesced_push(ctx.clone(), "repo-cleanup", ref_updates).await;
+
+        // Verify marker was cleaned up
+        let markers = git::list_push_markers(&gate_path).unwrap();
+        assert!(
+            markers.is_empty(),
+            "Push marker should be cleaned up after processing"
+        );
+
+        // Verify run was still created
+        let runs = {
+            let db = ctx.db.lock().await;
+            db.list_runs("repo-cleanup", None).unwrap()
+        };
+        assert_eq!(runs.len(), 1);
     }
 }

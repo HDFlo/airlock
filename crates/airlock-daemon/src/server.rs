@@ -218,6 +218,28 @@ impl Server {
             }
         }
 
+        // Re-install hooks for all enrolled repos to ensure they have the latest
+        // hook scripts (e.g., with push marker ref creation support)
+        {
+            match db.list_repos() {
+                Ok(repos) => {
+                    for repo in &repos {
+                        if let Err(e) = airlock_core::git::hooks::install_hooks(&repo.gate_path) {
+                            warn!("Failed to re-install hooks for repo {}: {}", repo.id, e);
+                        } else {
+                            debug!("Re-installed hooks for repo {}", repo.id);
+                        }
+                    }
+                    if !repos.is_empty() {
+                        info!("Re-installed hooks for {} enrolled repo(s)", repos.len());
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to list repos for hook re-installation: {}", e);
+                }
+            }
+        }
+
         // Create handler context with shutdown sender
         let ctx = Arc::new(HandlerContext::new(
             self.paths.clone(),

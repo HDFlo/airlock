@@ -35,8 +35,9 @@ pub use hooks::{
 };
 pub use push::{build_refspec, push, push_all_branches, push_branch, push_ref_updates};
 pub use refs::{
-    classify_ref, delete_ref, get_ref_update_type, is_ancestor_of, is_null_sha, is_pipeline_ref,
-    parse_ref_updates, resolve_ref, rev_parse_head, run_ref, update_ref, RefClass, RefUpdateType,
+    classify_ref, cleanup_push_markers, delete_ref, get_ref_update_type, is_ancestor_of,
+    is_null_sha, is_pipeline_ref, list_push_markers, parse_ref_updates, push_marker_ref,
+    resolve_ref, rev_parse_head, run_ref, update_ref, RefClass, RefUpdateType,
 };
 pub use remote::{
     add_remote, get_remote_url, list_remotes, remote_exists, remove_remote, rename_remote,

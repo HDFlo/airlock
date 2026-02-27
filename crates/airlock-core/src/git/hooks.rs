@@ -66,13 +66,23 @@ pub const POST_RECEIVE: &str = r#"#!/bin/sh
 SOCKET="${HOME}/.airlock/socket"
 REPO_PATH="$(pwd)"
 
-# Collect all ref updates
+# Collect all ref updates and create push marker refs
 REF_UPDATES=""
 while read oldrev newrev refname; do
     if [ -n "$REF_UPDATES" ]; then
         REF_UPDATES="${REF_UPDATES},"
     fi
     REF_UPDATES="${REF_UPDATES}{\"ref_name\":\"${refname}\",\"old_sha\":\"${oldrev}\",\"new_sha\":\"${newrev}\"}"
+
+    # Create marker ref for pipeline branches (non-deletion pushes to refs/heads/*)
+    case "$refname" in
+        refs/heads/*)
+            if [ "$newrev" != "0000000000000000000000000000000000000000" ]; then
+                branch="${refname#refs/heads/}"
+                git update-ref "refs/airlock/pushed/${branch}" "$newrev" 2>/dev/null || true
+            fi
+            ;;
+    esac
 done
 
 # Notify daemon of push received
