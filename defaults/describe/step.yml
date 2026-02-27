@@ -37,20 +37,57 @@ run: |
   1. Understand the code change especially the intent of it
   2. Generate a clear, concise title (50 chars or less, conventional commit style)
   3. Generate a markdown body with 2 sections: Summary, Key changes
+  4. Generate a clean Mermaid diagram representing components related to this change and their relationships with each other. Only include components that help explain this change, NOT every single component analyzed.
 
-  Respond with JSON: {\"title\": \"...\", \"markdown_body\": \"...\"}"
+  ## Mermaid Diagram Rules
+
+  Use \`flowchart TD\` (Top Down) for vertical flow layout.
+
+  Each component's status (unchanged, added, updated, removed) should be explicitly labeled in the node text.
+  Style nodes with transparent backgrounds, colored borders, and rounded corners using classDef.
+  Define these classes at the end of your diagram (colors aligned with Airlock Design System tokens):
+  \`\`\`
+  classDef unchanged stroke:#626D84,stroke-width:2px,fill:transparent,color:#1B2236,rx:8,ry:8
+  classDef added stroke:#29A34A,stroke-width:2px,fill:transparent,color:#1B2236,rx:8,ry:8
+  classDef updated stroke:#6B5FCE,stroke-width:2px,fill:transparent,color:#1B2236,rx:8,ry:8
+  classDef removed stroke:#D92424,stroke-width:2px,fill:transparent,color:#1B2236,rx:8,ry:8
+  \`\`\`
+  Apply classes to every node using the ::: syntax.
+
+  To avoid special characters breaking syntax, write each node consistently with node id, surrounding square brackets and double quotes like this: shiny_component[\"NewShinyComponent (added)\"]:::added.
+
+  Use class/function/module or descriptive names for display and avoid using file paths unless there's no other way to describe the node.
+
+  Use text on edges to describe the relationships between node IDs. Each edge label should be double quoted.
+
+  Use subgraph to express high level system architecture when appropriate. No need to label a subgraph with unchanged/added/updated/removed.
+
+  Define each subgraph with a short ID and a double-quoted label like this: \`subgraph my_subgraph_id[\"My Subgraph Label\"]\`
+
+  Style subgraphs with gray dashed rounded borders by adding this class and applying it to the subgraph IDs:
+  \`\`\`
+  classDef subgraphStyle fill:transparent,stroke:#C0C5CF,stroke-width:1px,stroke-dasharray:5 5,rx:8,ry:8
+  class my_subgraph_id,another_subgraph_id subgraphStyle
+  \`\`\`
+
+  Respond with JSON: {\"title\": \"...\", \"markdown_body\": \"...\", \"mermaid_diagram\": \"...\"}"
 
   # Define output schema for structured response
-  SCHEMA='{"type":"object","properties":{"title":{"type":"string"},"markdown_body":{"type":"string"}},"required":["title","markdown_body"]}'
+  SCHEMA='{"type":"object","properties":{"title":{"type":"string"},"markdown_body":{"type":"string"},"mermaid_diagram":{"type":"string"}},"required":["title","markdown_body","mermaid_diagram"]}'
 
   # Call agent and get JSON response (with output schema, response is clean JSON)
   RESPONSE=$(airlock exec agent "$PROMPT" --output-schema "$SCHEMA")
 
-  # Extract title and body using airlock exec json helper
+  # Extract title, body, and diagram using airlock exec json helper
   TITLE=$(echo "$RESPONSE" | airlock exec json title)
   BODY=$(echo "$RESPONSE" | airlock exec json markdown_body)
+  DIAGRAM=$(echo "$RESPONSE" | airlock exec json mermaid_diagram)
 
-  # Write as content artifact for display in UI
-  printf "# %s\n\n%s" "$TITLE" "$BODY" | airlock artifact content --title "Description"
+  # Write as content artifact for display in UI (text summary + mermaid diagram)
+  {
+    printf "# %s\n\n%s\n\n" "$TITLE" "$BODY"
+    printf "## Component Diagram\n\n"
+    printf '```mermaid\n%s\n```\n' "$DIAGRAM"
+  } | airlock artifact content --title "Description"
 
   echo "Generated description: $TITLE"
