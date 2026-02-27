@@ -187,9 +187,7 @@ fn resolve_user_path() -> &'static str {
             vec!["-l", "-c", "echo $PATH"]
         };
 
-        let result = std::process::Command::new(shell)
-            .args(&args)
-            .output();
+        let result = std::process::Command::new(shell).args(&args).output();
 
         match result {
             Ok(output) if output.status.success() => {
