@@ -283,13 +283,13 @@ Stages are defined in `.airlock/config.yml` and execute in order. Each stage run
 
 **Stage Properties:**
 
-| Property            | Type    | Default     | Description                                                                                            |
-| ------------------- | ------- | ----------- | ------------------------------------------------------------------------------------------------------ |
-| `name`              | string  | —           | Stage identifier                                                                                       |
-| `run`               | string  | —           | Shell command to execute                                                                               |
-| `shell`             | string  | login shell | Shell to use (sh, bash, zsh). Omit to use `$SHELL -l` for full user environment (API keys, PATH, etc.) |
-| `continue_on_error` | boolean | `false`     | Continue pipeline if stage fails                                                                       |
-| `require_approval`  | boolean or string | `false`     | Pause pipeline for user approval (`true`, `false`, or `if_patches`)                                                                       |
+| Property            | Type              | Default     | Description                                                                                            |
+| ------------------- | ----------------- | ----------- | ------------------------------------------------------------------------------------------------------ |
+| `name`              | string            | —           | Stage identifier                                                                                       |
+| `run`               | string            | —           | Shell command to execute                                                                               |
+| `shell`             | string            | login shell | Shell to use (sh, bash, zsh). Omit to use `$SHELL -l` for full user environment (API keys, PATH, etc.) |
+| `continue_on_error` | boolean           | `false`     | Continue pipeline if stage fails                                                                       |
+| `require_approval`  | boolean or string | `false`     | Pause pipeline for user approval (`true`, `false`, or `if_patches`)                                    |
 
 ### 5.2 Artifact Types
 

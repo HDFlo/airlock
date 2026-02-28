@@ -45,12 +45,14 @@ pub enum AirlockEvent {
         job_key: String,
         step_name: String,
         status: String,
+        branch: String,
     },
     /// A pipeline run completed.
     RunCompleted {
         repo_id: String,
         run_id: String,
         success: bool,
+        branch: String,
     },
     /// A chunk of log output from a running step.
     LogChunk {

@@ -47,12 +47,14 @@ export interface StepCompletedEvent {
   job_key: string;
   step_name: string;
   status: string;
+  branch: string;
 }
 
 export interface RunCompletedEvent {
   repo_id: string;
   run_id: string;
   success: boolean;
+  branch: string;
 }
 
 export interface LogChunkEvent {

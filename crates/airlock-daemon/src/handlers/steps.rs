@@ -3,8 +3,8 @@
 //! Handles step-based pipeline operations: approve steps and get run diffs.
 
 use super::pipeline::{
-    extract_branch_name, load_workflows_for_run, now_epoch, resume_dag_after_job_completion,
-    step_status_str,
+    emit_run_final_status, execute_step_sequence, extract_branch_name, load_workflows_for_run,
+    now_epoch, resume_dag_after_job_completion, StepSequenceParams,
 };
 use super::util::parse_params;
 use super::HandlerContext;
@@ -12,10 +12,8 @@ use crate::ipc::{
     error_codes, AirlockEvent, ApplyPatchesParams, ApplyPatchesResult, ApproveStepParams,
     ApproveStepResult, CommitDiffInfo, GetRunDiffParams, GetRunDiffResult, PatchError, Response,
 };
-use crate::pipeline::LogStreamCallback;
-use crate::stage_loader::StageLoader;
 use airlock_core::git::compute_diff_with_commits;
-use airlock_core::{ApprovalMode, JobStatus, StepStatus};
+use airlock_core::{JobStatus, StepStatus};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
@@ -359,248 +357,30 @@ async fn resume_pipeline_after_approval(
         }
     };
 
-    // Create stage loader for resolving reusable stages
-    let stage_loader = StageLoader::default();
-
     // Execute remaining steps
-    let mut job_success = true;
-    let mut job_error: Option<String> = None;
-    let mut paused_for_approval = false;
-
-    for step in remaining_steps {
-        // Find the step result for this step
-        let step_result = match step_results.iter_mut().find(|r| r.name == step.name) {
-            Some(r) => r,
-            None => {
-                error!("Step result for '{}' not found", step.name);
-                continue;
-            }
-        };
-
-        // Update current step in run
-        {
-            let db = ctx.db.lock().await;
-            if let Err(e) = db.update_run_current_step(&run.id, Some(&step.name)) {
-                warn!("Failed to update current step: {}", e);
-            }
-        }
-
-        info!("Executing step '{}' (resumed after approval)", step.name);
-
-        // Resolve reusable stage if using `uses:` syntax
-        let mut resolved_step = if step.is_reusable() {
-            debug!("Resolving reusable action: {:?}", step.uses);
-            match stage_loader.resolve_stage(step).await {
-                Ok(resolved) => resolved,
-                Err(e) => {
-                    error!(
-                        "Failed to resolve reusable action '{}' (uses: {:?}): {}",
-                        step.name, step.uses, e
-                    );
-                    job_success = false;
-                    job_error = Some(format!(
-                        "Failed to resolve reusable action '{}': {}",
-                        step.name, e
-                    ));
-                    break;
-                }
-            }
-        } else {
-            step.clone()
-        };
-
-        // If this is the pre-paused step being re-executed after approval,
-        // clear the approval gate — the user already approved.
-        if step_was_pre_paused && step.name == approved_step_name {
-            resolved_step.require_approval = ApprovalMode::Never;
-        }
-
-        // Build environment for this step
-        let env_params = crate::pipeline::StageEnvironmentParams {
-            paths: &ctx.paths,
-            repo_id: &run.repo_id,
-            run_id: &run.id,
-            stage_name: &resolved_step.name,
-            branch: &run.branch,
-            base_sha: &run.base_sha,
-            head_sha: &run.head_sha,
-            worktree_path: &worktree_path,
-            repo_root: &repo.working_path,
-            upstream_url: &repo.upstream_url,
-            gate_path: &repo.gate_path,
-            job_key: Some(approved_job_key),
-        };
-
-        let env = match crate::pipeline::build_stage_environment(&env_params) {
-            Ok(mut e) => {
-                e.job_name = job_config.name.clone();
-                e
-            }
-            Err(e) => {
-                error!(
-                    "Failed to build environment for step '{}': {}",
-                    resolved_step.name, e
-                );
-                job_success = false;
-                job_error = Some(format!("Failed to build environment: {}", e));
-                break;
-            }
-        };
-
-        // Mark step as running
-        {
-            let db = ctx.db.lock().await;
-            step_result.status = StepStatus::Running;
-            step_result.started_at = Some(now_epoch());
-            let _ = db.update_step_result(step_result);
-        }
-
-        // Emit StepStarted event
-        ctx.emit(AirlockEvent::StepStarted {
-            repo_id: run.repo_id.clone(),
-            run_id: run.id.clone(),
-            job_key: approved_job_key.to_string(),
-            step_name: step.name.clone(),
-        });
-
-        // Create log streaming callback that both emits events and writes to disk
-        let log_repo_id = run.repo_id.clone();
-        let log_run_id = run.id.clone();
-        let log_job_key = approved_job_key.to_string();
-        let log_step_name = step.name.clone();
-        let log_ctx = ctx.clone();
-        let log_logs_dir = env.logs_dir.clone();
-        let log_callback: LogStreamCallback =
-            Arc::new(move |stream_type: &str, content: String| {
-                // Emit event for real-time UI streaming
-                log_ctx.emit(AirlockEvent::LogChunk {
-                    repo_id: log_repo_id.clone(),
-                    run_id: log_run_id.clone(),
-                    job_key: log_job_key.clone(),
-                    step_name: log_step_name.clone(),
-                    stream: stream_type.to_string(),
-                    content: content.clone(),
-                });
-
-                // Append to log file on disk so late subscribers can read existing output
-                let filename = if stream_type == "stdout" {
-                    "stdout.log"
-                } else {
-                    "stderr.log"
-                };
-                let path = log_logs_dir.join(filename);
-                crate::pipeline::append_log_capped(&path, content.as_bytes());
-            });
-
-        // Execute the step
-        let timeout = std::time::Duration::from_secs(resolved_step.timeout.unwrap_or(60 * 60));
-        let result = crate::pipeline::execute_stage_with_log_callback(
-            &resolved_step,
-            &step_result.id,
-            &run.id,
-            &env,
-            timeout,
-            Some(log_callback),
-            None,
-        )
-        .await;
-
-        match result {
-            Ok(res) => {
-                *step_result = res.clone();
-
-                // Update step result in database
-                {
-                    let db = ctx.db.lock().await;
-                    let _ = db.update_step_result(step_result);
-                }
-
-                // Emit StepCompleted event
-                ctx.emit(AirlockEvent::StepCompleted {
-                    repo_id: run.repo_id.clone(),
-                    run_id: run.id.clone(),
-                    job_key: approved_job_key.to_string(),
-                    step_name: step.name.clone(),
-                    status: step_status_str(res.status).to_string(),
-                });
-
-                // Check if we should pause for approval
-                if crate::pipeline::should_pause_for_approval(&res) {
-                    info!(
-                        "Job '{}' paused at step '{}' awaiting approval",
-                        approved_job_key, step.name
-                    );
-                    paused_for_approval = true;
-                    break;
-                }
-
-                // Check if we should continue
-                if !crate::pipeline::should_continue_pipeline(&resolved_step, &res) {
-                    error!(
-                        "Job '{}' stopped at step '{}' due to failure",
-                        approved_job_key, step.name
-                    );
-                    job_success = false;
-                    job_error = res.error.clone();
-
-                    // Mark remaining steps as skipped
-                    let db = ctx.db.lock().await;
-                    for remaining in step_results.iter_mut() {
-                        if remaining.status == StepStatus::Pending {
-                            remaining.status = StepStatus::Skipped;
-                            let _ = db.update_step_result(remaining);
-                        }
-                    }
-                    break;
-                }
-
-                if res.status == StepStatus::Failed {
-                    warn!(
-                        "Step '{}' in job '{}' failed but continue_on_error=true, continuing",
-                        step.name, approved_job_key
-                    );
-                }
-            }
-            Err(e) => {
-                error!(
-                    "Step '{}' in job '{}' execution error: {}",
-                    step.name, approved_job_key, e
-                );
-                job_success = false;
-                job_error = Some(e.to_string());
-
-                // Update step as failed
-                {
-                    let db = ctx.db.lock().await;
-                    step_result.status = StepStatus::Failed;
-                    step_result.error = Some(e.to_string());
-                    let _ = db.update_step_result(step_result);
-                }
-
-                // Emit StepCompleted event for failure
-                ctx.emit(AirlockEvent::StepCompleted {
-                    repo_id: run.repo_id.clone(),
-                    run_id: run.id.clone(),
-                    job_key: approved_job_key.to_string(),
-                    step_name: step.name.clone(),
-                    status: "failed".to_string(),
-                });
-                break;
-            }
-        }
-    }
-
-    // Determine final job status
-    let final_job_status = if paused_for_approval {
-        JobStatus::AwaitingApproval
-    } else if job_success {
-        JobStatus::Passed
+    let clear_approval = if step_was_pre_paused {
+        Some(approved_step_name)
     } else {
-        JobStatus::Failed
+        None
     };
 
+    let seq_params = StepSequenceParams {
+        ctx: &ctx,
+        run: &run,
+        repo: &repo,
+        job_key: approved_job_key,
+        job_config_name: job_config.name.clone(),
+        worktree_path: &worktree_path,
+        effective_base_sha: &run.base_sha,
+        cancel: None,
+        clear_approval_for_step: clear_approval,
+    };
+
+    let (final_job_status, job_error) =
+        execute_step_sequence(&seq_params, remaining_steps, &mut step_results).await;
+
     // Clear current step if not paused
-    if !paused_for_approval {
+    if final_job_status != JobStatus::AwaitingApproval {
         let db = ctx.db.lock().await;
         if let Err(e) = db.update_run_current_step(&run.id, None) {
             warn!("Failed to clear current step: {}", e);
@@ -618,7 +398,7 @@ async fn resume_pipeline_after_approval(
     .await;
 
     // Emit job completed event (only if not paused again)
-    if !paused_for_approval {
+    if final_job_status != JobStatus::AwaitingApproval {
         let status_str = match final_job_status {
             JobStatus::Passed => "passed",
             JobStatus::Failed => "failed",
@@ -702,63 +482,6 @@ fn find_job_worktree(
     } else {
         standard_path
     }
-}
-
-/// Check the state of all jobs and emit appropriate run-level events.
-async fn emit_run_final_status(ctx: &Arc<HandlerContext>, run: &airlock_core::Run) {
-    let (all_done, any_paused, any_failed, all_passed) = {
-        let db = ctx.db.lock().await;
-        match db.get_job_results_for_run(&run.id) {
-            Ok(jobs) => {
-                let all_done = jobs.iter().all(|j| j.status.is_final());
-                let any_paused = jobs.iter().any(|j| j.status == JobStatus::AwaitingApproval);
-                let any_failed = jobs.iter().any(|j| j.status == JobStatus::Failed);
-                let all_passed = jobs.iter().all(|j| j.status == JobStatus::Passed);
-                (all_done, any_paused, any_failed, all_passed)
-            }
-            Err(_) => (false, false, false, false),
-        }
-    };
-
-    if any_paused && !all_done {
-        // Some jobs are still paused — run is waiting for approval
-        ctx.emit(AirlockEvent::RunUpdated {
-            repo_id: run.repo_id.clone(),
-            run_id: run.id.clone(),
-            status: "awaiting_approval".to_string(),
-        });
-    } else if all_done {
-        if all_passed {
-            info!(
-                "Pipeline completed successfully for run {} (resumed)",
-                run.id
-            );
-            ctx.emit(AirlockEvent::RunCompleted {
-                repo_id: run.repo_id.clone(),
-                run_id: run.id.clone(),
-                success: true,
-            });
-        } else if any_failed {
-            error!("Pipeline failed for run {} (resumed)", run.id);
-            let db = ctx.db.lock().await;
-            let _ = db.update_run_error(&run.id, Some("One or more jobs failed"));
-            drop(db);
-
-            ctx.emit(AirlockEvent::RunCompleted {
-                repo_id: run.repo_id.clone(),
-                run_id: run.id.clone(),
-                success: false,
-            });
-        } else {
-            // All done but not all passed and none failed — e.g., all skipped
-            ctx.emit(AirlockEvent::RunCompleted {
-                repo_id: run.repo_id.clone(),
-                run_id: run.id.clone(),
-                success: false,
-            });
-        }
-    }
-    // If not all done and none paused, there's likely still running jobs — don't emit
 }
 
 /// Handle the `apply_patches` method.
@@ -1519,10 +1242,14 @@ mod tests {
         let event = rx.try_recv().unwrap();
         match event {
             AirlockEvent::RunCompleted {
-                run_id, success, ..
+                run_id,
+                success,
+                branch,
+                ..
             } => {
                 assert_eq!(run_id, "run1");
                 assert!(success);
+                assert_eq!(branch, "refs/heads/feature/test");
             }
             other => panic!("Expected RunCompleted, got {:?}", other),
         }
@@ -1560,10 +1287,14 @@ mod tests {
         let event = rx.try_recv().unwrap();
         match event {
             AirlockEvent::RunCompleted {
-                run_id, success, ..
+                run_id,
+                success,
+                branch,
+                ..
             } => {
                 assert_eq!(run_id, "run1");
                 assert!(!success);
+                assert_eq!(branch, "refs/heads/feature/test");
             }
             other => panic!("Expected RunCompleted, got {:?}", other),
         }

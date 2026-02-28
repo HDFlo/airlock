@@ -8,3 +8,4 @@ CHANGELOG.md
 assets/manifest.json
 crates/airlock-app/src-tauri/tauri.conf.json
 crates/airlock-app/src-tauri/gen
+specs

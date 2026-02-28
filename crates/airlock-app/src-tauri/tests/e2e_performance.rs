@@ -42,8 +42,12 @@ fn test_e2e_desktop_app_memory_usage_stays_reasonable() {
     }
     eprintln!("2. Display is available");
 
-    // Kill any existing airlock-app processes
-    kill_existing_app_processes();
+    // Skip if an airlock-app is already running (e.g. `make dev`)
+    if is_app_already_running() {
+        eprintln!("\n⚠️  An airlock-app process is already running (e.g. from `make dev`) - skipping test");
+        eprintln!("   Stop the existing app first if you want to run this test");
+        return;
+    }
 
     // Launch the app
     eprintln!("3. Launching desktop app...");
@@ -181,13 +185,18 @@ fn can_run_gui_apps() -> bool {
     }
 }
 
-/// Kill any existing airlock-app processes
-fn kill_existing_app_processes() {
+/// Check if an airlock-app process is already running (e.g. from `make dev`).
+fn is_app_already_running() -> bool {
     #[cfg(unix)]
     {
-        let _ = Command::new("pkill").args(["-f", "airlock-app"]).status();
-        thread::sleep(Duration::from_millis(500));
+        let output = Command::new("pgrep")
+            .args(["-f", "airlock-app"])
+            .output();
+        if let Ok(output) = output {
+            return output.status.success();
+        }
     }
+    false
 }
 
 /// Get memory usage for a process in kilobytes

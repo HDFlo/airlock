@@ -266,18 +266,68 @@ fn emit_event_to_frontend<R: tauri::Runtime>(
         warn!("Failed to emit event to frontend: {}", e);
     }
 
-    // Send OS notification for new pushes
-    if let AirlockEvent::RunCreated { branch, .. } = event {
-        use tauri_plugin_notification::NotificationExt;
-        if let Err(e) = app_handle
-            .notification()
-            .builder()
-            .title("Airlock")
-            .body(format!("Push received on {}", branch))
-            .show()
-        {
-            warn!("Failed to send push notification: {}", e);
+    // Send OS notifications
+    match event {
+        AirlockEvent::RunCreated { branch, .. } => {
+            use tauri_plugin_notification::NotificationExt;
+            if let Err(e) = app_handle
+                .notification()
+                .builder()
+                .title("Airlock")
+                .body(format!("Push received on {}", branch))
+                .show()
+            {
+                warn!("Failed to send push notification: {}", e);
+            }
         }
+        AirlockEvent::StepCompleted {
+            step_name,
+            status,
+            branch,
+            ..
+        } if status == "awaiting_approval" => {
+            use tauri_plugin_notification::NotificationExt;
+            let display_branch = branch.strip_prefix("refs/heads/").unwrap_or(branch);
+            if let Err(e) = app_handle
+                .notification()
+                .builder()
+                .title("Airlock - Approval Required")
+                .body(format!(
+                    "Step '{}' is awaiting approval on {}",
+                    step_name, display_branch
+                ))
+                .show()
+            {
+                warn!("Failed to send approval notification: {}", e);
+            }
+        }
+        AirlockEvent::RunCompleted {
+            success, branch, ..
+        } => {
+            use tauri_plugin_notification::NotificationExt;
+            let display_branch = branch.strip_prefix("refs/heads/").unwrap_or(branch);
+            let (title, body) = if *success {
+                (
+                    "Airlock - Pipeline Passed",
+                    format!("Pipeline completed successfully on {}", display_branch),
+                )
+            } else {
+                (
+                    "Airlock - Pipeline Failed",
+                    format!("Pipeline failed on {}", display_branch),
+                )
+            };
+            if let Err(e) = app_handle
+                .notification()
+                .builder()
+                .title(title)
+                .body(body)
+                .show()
+            {
+                warn!("Failed to send pipeline notification: {}", e);
+            }
+        }
+        _ => {}
     }
 
     // Also emit specific event types for easier subscription
@@ -330,17 +380,19 @@ fn emit_event_to_frontend<R: tauri::Runtime>(
             job_key,
             step_name,
             status,
+            branch,
         } => (
             "airlock://step-completed",
-            serde_json::json!({ "repo_id": repo_id, "run_id": run_id, "job_key": job_key, "step_name": step_name, "status": status }),
+            serde_json::json!({ "repo_id": repo_id, "run_id": run_id, "job_key": job_key, "step_name": step_name, "status": status, "branch": branch }),
         ),
         AirlockEvent::RunCompleted {
             repo_id,
             run_id,
             success,
+            branch,
         } => (
             "airlock://run-completed",
-            serde_json::json!({ "repo_id": repo_id, "run_id": run_id, "success": success }),
+            serde_json::json!({ "repo_id": repo_id, "run_id": run_id, "success": success, "branch": branch }),
         ),
         AirlockEvent::LogChunk {
             repo_id,

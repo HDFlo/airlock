@@ -13,8 +13,9 @@ use crate::ipc::AirlockEvent;
 use crate::pipeline::LogStreamCallback;
 use crate::stage_loader::StageLoader;
 use airlock_core::{
-    filter_workflows_for_branch, load_workflows_from_tree, validate_job_dag, JobConfig, JobResult,
-    JobStatus, RefUpdate, Repo, Run, StepResult, StepStatus, WorkflowConfig,
+    filter_workflows_for_branch, load_workflows_from_tree, validate_job_dag, ApprovalMode,
+    JobConfig, JobResult, JobStatus, RefUpdate, Repo, Run, StepDefinition, StepResult, StepStatus,
+    WorkflowConfig,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -162,6 +163,7 @@ pub async fn execute_pipeline(
                 repo_id: run.repo_id.clone(),
                 run_id: run.id.clone(),
                 success: false,
+                branch: run.branch.clone(),
             });
             return;
         }
@@ -284,7 +286,6 @@ async fn execute_workflow_dag(
     // Track job statuses and worktree paths for inheritance
     let mut job_statuses: HashMap<String, JobStatus> = HashMap::new();
     let mut job_worktrees: HashMap<String, PathBuf> = HashMap::new();
-    let mut workflow_failed = false;
 
     for (wave_idx, wave) in waves.iter().enumerate() {
         // Check cancellation before each wave
@@ -315,7 +316,6 @@ async fn execute_workflow_dag(
             // Check if this job should be skipped (dependency failed)
             if should_skip_job(job_key, job_config, &job_statuses) {
                 skip_job(ctx, run, job_key, job_id_map, &mut job_statuses).await;
-                workflow_failed = true;
                 continue;
             }
 
@@ -335,10 +335,6 @@ async fn execute_workflow_dag(
             .await;
 
             job_worktrees.insert(job_key.clone(), worktree_path.clone());
-
-            if status == JobStatus::Failed {
-                workflow_failed = true;
-            }
             job_statuses.insert(job_key.clone(), status);
         } else {
             // Multiple jobs in wave — execute in parallel using tokio::JoinSet
@@ -351,7 +347,6 @@ async fn execute_workflow_dag(
 
                 if should_skip_job(job_key, job_config, &job_statuses) {
                     skip_job(ctx, run, job_key, job_id_map, &mut job_statuses).await;
-                    workflow_failed = true;
                     continue;
                 }
 
@@ -390,14 +385,10 @@ async fn execute_workflow_dag(
                 match result {
                     Ok((job_key, worktree_path, status)) => {
                         job_worktrees.insert(job_key.clone(), worktree_path);
-                        if status == JobStatus::Failed {
-                            workflow_failed = true;
-                        }
                         job_statuses.insert(job_key, status);
                     }
                     Err(e) => {
                         error!("Job task panicked: {}", e);
-                        workflow_failed = true;
                     }
                 }
             }
@@ -407,9 +398,6 @@ async fn execute_workflow_dag(
     // Clean up ephemeral worktrees only. The persistent per-repo worktree
     // is kept alive so build caches survive across runs.
     let persistent_wt = paths.repo_worktree(&run.repo_id);
-    let any_paused = job_statuses
-        .values()
-        .any(|s| *s == JobStatus::AwaitingApproval);
     for (job_key, worktree_path) in &job_worktrees {
         // Never remove the persistent worktree
         if *worktree_path == persistent_wt {
@@ -427,31 +415,7 @@ async fn execute_workflow_dag(
     }
 
     // Emit final run result
-    if any_paused {
-        info!(
-            "Workflow paused for run {} (one or more jobs awaiting approval)",
-            run.id
-        );
-        ctx.emit(AirlockEvent::RunUpdated {
-            repo_id: run.repo_id.clone(),
-            run_id: run.id.clone(),
-            status: "awaiting_approval".to_string(),
-        });
-    } else if workflow_failed {
-        error!("Workflow failed for run {}", run.id);
-        ctx.emit(AirlockEvent::RunCompleted {
-            repo_id: run.repo_id.clone(),
-            run_id: run.id.clone(),
-            success: false,
-        });
-    } else {
-        info!("Workflow completed successfully for run {}", run.id);
-        ctx.emit(AirlockEvent::RunCompleted {
-            repo_id: run.repo_id.clone(),
-            run_id: run.id.clone(),
-            success: true,
-        });
-    }
+    emit_run_final_status(ctx, run).await;
 }
 
 /// Determine the worktree path for a job based on inheritance rules.
@@ -574,6 +538,305 @@ pub(super) async fn skip_job(
     job_statuses.insert(job_key.to_string(), JobStatus::Skipped);
 }
 
+/// Create a log streaming callback that both emits events and writes to disk.
+fn create_log_callback(
+    ctx: &Arc<HandlerContext>,
+    repo_id: &str,
+    run_id: &str,
+    job_key: &str,
+    step_name: &str,
+    logs_dir: &Path,
+) -> LogStreamCallback {
+    let log_repo_id = repo_id.to_string();
+    let log_run_id = run_id.to_string();
+    let log_job_key = job_key.to_string();
+    let log_step_name = step_name.to_string();
+    let log_ctx = ctx.clone();
+    let log_logs_dir = logs_dir.to_path_buf();
+    Arc::new(move |stream_type: &str, content: String| {
+        log_ctx.emit(AirlockEvent::LogChunk {
+            repo_id: log_repo_id.clone(),
+            run_id: log_run_id.clone(),
+            job_key: log_job_key.clone(),
+            step_name: log_step_name.clone(),
+            stream: stream_type.to_string(),
+            content: content.clone(),
+        });
+
+        let filename = if stream_type == "stdout" {
+            "stdout.log"
+        } else {
+            "stderr.log"
+        };
+        let path = log_logs_dir.join(filename);
+        crate::pipeline::append_log_capped(&path, content.as_bytes());
+    })
+}
+
+/// Parameters for executing a sequence of steps within a job.
+pub(super) struct StepSequenceParams<'a> {
+    pub ctx: &'a Arc<HandlerContext>,
+    pub run: &'a Run,
+    pub repo: &'a Repo,
+    pub job_key: &'a str,
+    pub job_config_name: Option<String>,
+    pub worktree_path: &'a Path,
+    pub effective_base_sha: &'a str,
+    pub cancel: Option<&'a CancellationToken>,
+    /// If set, clear the approval gate on this step name (pre-paused re-execution).
+    pub clear_approval_for_step: Option<&'a str>,
+}
+
+/// Execute a sequence of steps, handling resolve/env/execute/emit for each.
+///
+/// Returns `(JobStatus, Option<String>)` — the final status and optional error message.
+/// On failure, remaining Pending steps are marked as Skipped.
+pub(super) async fn execute_step_sequence(
+    params: &StepSequenceParams<'_>,
+    steps: &[StepDefinition],
+    step_results: &mut [StepResult],
+) -> (JobStatus, Option<String>) {
+    let stage_loader = StageLoader::default();
+    let mut job_success = true;
+    let mut job_error: Option<String> = None;
+    let mut paused_for_approval = false;
+
+    for step in steps {
+        // Check cancellation before each step
+        if let Some(cancel) = params.cancel {
+            if cancel.is_cancelled() {
+                info!(
+                    "Run {} cancelled before step '{}' in job '{}'",
+                    params.run.id, step.name, params.job_key
+                );
+                job_success = false;
+                job_error = Some("Superseded by newer push".to_string());
+                break;
+            }
+        }
+
+        // Find the matching step result by name
+        let step_result = match step_results.iter_mut().find(|r| r.name == step.name) {
+            Some(r) => r,
+            None => {
+                error!(
+                    "Step result for '{}' not found in job '{}'",
+                    step.name, params.job_key
+                );
+                job_success = false;
+                break;
+            }
+        };
+
+        info!("Executing step '{}' in job '{}'", step.name, params.job_key);
+
+        // Update current step in run
+        {
+            let db = params.ctx.db.lock().await;
+            let _ = db.update_run_current_step(&params.run.id, Some(&step.name));
+        }
+
+        // Resolve reusable action
+        let mut resolved_step = if step.is_reusable() {
+            debug!("Resolving reusable action: {:?}", step.uses);
+            match stage_loader.resolve_stage(step).await {
+                Ok(resolved) => resolved,
+                Err(e) => {
+                    error!(
+                        "Failed to resolve reusable action '{}' (uses: {:?}): {}",
+                        step.name, step.uses, e
+                    );
+                    job_success = false;
+                    job_error = Some(format!(
+                        "Failed to resolve reusable action '{}': {}",
+                        step.name, e
+                    ));
+                    break;
+                }
+            }
+        } else {
+            step.clone()
+        };
+
+        // If this is the pre-paused step being re-executed after approval,
+        // clear the approval gate — the user already approved.
+        if let Some(approved_name) = params.clear_approval_for_step {
+            if step.name == approved_name {
+                resolved_step.require_approval = ApprovalMode::Never;
+            }
+        }
+
+        // Build environment for this step
+        let env_params = crate::pipeline::StageEnvironmentParams {
+            paths: &params.ctx.paths,
+            repo_id: &params.run.repo_id,
+            run_id: &params.run.id,
+            stage_name: &resolved_step.name,
+            branch: &params.run.branch,
+            base_sha: params.effective_base_sha,
+            head_sha: &params.run.head_sha,
+            worktree_path: params.worktree_path,
+            repo_root: &params.repo.working_path,
+            upstream_url: &params.repo.upstream_url,
+            gate_path: &params.repo.gate_path,
+            job_key: Some(params.job_key),
+        };
+
+        let env = match crate::pipeline::build_stage_environment(&env_params) {
+            Ok(mut e) => {
+                e.job_name = params.job_config_name.clone();
+                e
+            }
+            Err(e) => {
+                error!(
+                    "Failed to build environment for step '{}': {}",
+                    resolved_step.name, e
+                );
+                job_success = false;
+                job_error = Some(format!("Failed to build environment: {}", e));
+                break;
+            }
+        };
+
+        // Mark step as running
+        {
+            let db = params.ctx.db.lock().await;
+            step_result.status = StepStatus::Running;
+            step_result.started_at = Some(now_epoch());
+            let _ = db.update_step_result(step_result);
+        }
+
+        // Emit StepStarted event
+        params.ctx.emit(AirlockEvent::StepStarted {
+            repo_id: params.run.repo_id.clone(),
+            run_id: params.run.id.clone(),
+            job_key: params.job_key.to_string(),
+            step_name: step.name.clone(),
+        });
+
+        // Create log streaming callback
+        let log_callback = create_log_callback(
+            params.ctx,
+            &params.run.repo_id,
+            &params.run.id,
+            params.job_key,
+            &step.name,
+            &env.logs_dir,
+        );
+
+        // Execute the step
+        let timeout = std::time::Duration::from_secs(resolved_step.timeout.unwrap_or(60 * 60));
+        let result = crate::pipeline::execute_stage_with_log_callback(
+            &resolved_step,
+            &step_result.id,
+            &params.run.id,
+            &env,
+            timeout,
+            Some(log_callback),
+            params.cancel,
+        )
+        .await;
+
+        match result {
+            Ok(res) => {
+                *step_result = res.clone();
+
+                // Update step result in database
+                {
+                    let db = params.ctx.db.lock().await;
+                    let _ = db.update_step_result(step_result);
+                }
+
+                // Emit StepCompleted event
+                let status_str = step_status_str(res.status);
+                params.ctx.emit(AirlockEvent::StepCompleted {
+                    repo_id: params.run.repo_id.clone(),
+                    run_id: params.run.id.clone(),
+                    job_key: params.job_key.to_string(),
+                    step_name: step.name.clone(),
+                    status: status_str.to_string(),
+                    branch: params.run.branch.clone(),
+                });
+
+                // Check if we should pause for approval
+                if crate::pipeline::should_pause_for_approval(&res) {
+                    info!(
+                        "Job '{}' paused at step '{}' awaiting approval",
+                        params.job_key, step.name
+                    );
+                    paused_for_approval = true;
+                    break;
+                }
+
+                // Check if we should continue
+                if !crate::pipeline::should_continue_pipeline(&resolved_step, &res) {
+                    error!(
+                        "Job '{}' stopped at step '{}' due to failure",
+                        params.job_key, step.name
+                    );
+                    job_success = false;
+                    job_error = res.error.clone();
+                    break;
+                }
+
+                if res.status == StepStatus::Failed {
+                    warn!(
+                        "Step '{}' in job '{}' failed but continue_on_error=true, continuing",
+                        step.name, params.job_key
+                    );
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Step '{}' in job '{}' execution error: {}",
+                    step.name, params.job_key, e
+                );
+                job_success = false;
+                job_error = Some(e.to_string());
+
+                // Update step as failed
+                {
+                    let db = params.ctx.db.lock().await;
+                    step_result.status = StepStatus::Failed;
+                    step_result.error = Some(e.to_string());
+                    let _ = db.update_step_result(step_result);
+                }
+
+                params.ctx.emit(AirlockEvent::StepCompleted {
+                    repo_id: params.run.repo_id.clone(),
+                    run_id: params.run.id.clone(),
+                    job_key: params.job_key.to_string(),
+                    step_name: step.name.clone(),
+                    status: "failed".to_string(),
+                    branch: params.run.branch.clone(),
+                });
+                break;
+            }
+        }
+    }
+
+    // Mark any remaining Pending steps as Skipped
+    if !job_success {
+        let db = params.ctx.db.lock().await;
+        for remaining in step_results.iter_mut() {
+            if remaining.status == StepStatus::Pending {
+                remaining.status = StepStatus::Skipped;
+                let _ = db.update_step_result(remaining);
+            }
+        }
+    }
+
+    let final_status = if paused_for_approval {
+        JobStatus::AwaitingApproval
+    } else if job_success {
+        JobStatus::Passed
+    } else {
+        JobStatus::Failed
+    };
+
+    (final_status, job_error)
+}
+
 /// Execute a single job: set up worktree, run steps sequentially.
 ///
 /// Returns the final JobStatus. Checks `cancel` before each step.
@@ -655,9 +918,6 @@ pub(super) async fn execute_single_job(
             },
         );
 
-    // Create stage loader
-    let stage_loader = StageLoader::default();
-
     // Get step results from DB (for updating)
     let mut step_results = {
         let db = ctx.db.lock().await;
@@ -677,264 +937,26 @@ pub(super) async fn execute_single_job(
         }
     };
 
-    // Execute steps sequentially
-    let mut job_success = true;
-    let mut job_error: Option<String> = None;
-    let mut paused_for_approval = false;
-
-    for (idx, step) in job_config.steps.iter().enumerate() {
-        // Check cancellation before each step
-        if cancel.is_cancelled() {
-            info!(
-                "Run {} cancelled before step '{}' in job '{}'",
-                run.id, step.name, job_key
-            );
-            job_success = false;
-            job_error = Some("Superseded by newer push".to_string());
-            break;
-        }
-
-        // Find the matching step result (by order)
-        let step_result = match step_results.get_mut(idx) {
-            Some(r) => r,
-            None => {
-                error!(
-                    "Step result at index {} not found for job '{}'",
-                    idx, job_key
-                );
-                job_success = false;
-                break;
-            }
-        };
-
-        info!(
-            "Executing step {}/{} in job '{}': {}",
-            idx + 1,
-            job_config.steps.len(),
-            job_key,
-            step.name
-        );
-
-        // Update current step in run
-        {
-            let db = ctx.db.lock().await;
-            let _ = db.update_run_current_step(&run.id, Some(&step.name));
-        }
-
-        // Resolve reusable action
-        let resolved_step = if step.is_reusable() {
-            debug!("Resolving reusable action: {:?}", step.uses);
-            match stage_loader.resolve_stage(step).await {
-                Ok(resolved) => resolved,
-                Err(e) => {
-                    error!(
-                        "Failed to resolve reusable action '{}' (uses: {:?}): {}",
-                        step.name, step.uses, e
-                    );
-                    job_success = false;
-                    job_error = Some(format!(
-                        "Failed to resolve reusable action '{}': {}",
-                        step.name, e
-                    ));
-                    break;
-                }
-            }
-        } else {
-            step.clone()
-        };
-
-        // Build environment for this step
-        let env_params = crate::pipeline::StageEnvironmentParams {
-            paths: &ctx.paths,
-            repo_id: &run.repo_id,
-            run_id: &run.id,
-            stage_name: &resolved_step.name,
-            branch: &run.branch,
-            base_sha: &effective_base_sha,
-            head_sha: &run.head_sha,
-            worktree_path,
-            repo_root: &repo.working_path,
-            upstream_url: &repo.upstream_url,
-            gate_path: &repo.gate_path,
-            job_key: Some(job_key),
-        };
-
-        let env = match crate::pipeline::build_stage_environment(&env_params) {
-            Ok(mut e) => {
-                e.job_name = job_config.name.clone();
-                e
-            }
-            Err(e) => {
-                error!(
-                    "Failed to build environment for step '{}': {}",
-                    resolved_step.name, e
-                );
-                job_success = false;
-                job_error = Some(format!("Failed to build environment: {}", e));
-                break;
-            }
-        };
-
-        // Mark step as running
-        {
-            let db = ctx.db.lock().await;
-            step_result.status = StepStatus::Running;
-            step_result.started_at = Some(now_epoch());
-            let _ = db.update_step_result(step_result);
-        }
-
-        // Emit StepStarted event
-        ctx.emit(AirlockEvent::StepStarted {
-            repo_id: run.repo_id.clone(),
-            run_id: run.id.clone(),
-            job_key: job_key.to_string(),
-            step_name: step.name.clone(),
-        });
-
-        // Create log streaming callback that both emits events and writes to disk
-        let log_repo_id = run.repo_id.clone();
-        let log_run_id = run.id.clone();
-        let log_job_key = job_key.to_string();
-        let log_step_name = step.name.clone();
-        let log_ctx = ctx.clone();
-        let log_logs_dir = env.logs_dir.clone();
-        let log_callback: LogStreamCallback =
-            Arc::new(move |stream_type: &str, content: String| {
-                // Emit event for real-time UI streaming
-                log_ctx.emit(AirlockEvent::LogChunk {
-                    repo_id: log_repo_id.clone(),
-                    run_id: log_run_id.clone(),
-                    job_key: log_job_key.clone(),
-                    step_name: log_step_name.clone(),
-                    stream: stream_type.to_string(),
-                    content: content.clone(),
-                });
-
-                // Append to log file on disk so late subscribers can read existing output
-                let filename = if stream_type == "stdout" {
-                    "stdout.log"
-                } else {
-                    "stderr.log"
-                };
-                let path = log_logs_dir.join(filename);
-                crate::pipeline::append_log_capped(&path, content.as_bytes());
-            });
-
-        // Execute the step
-        let timeout = std::time::Duration::from_secs(resolved_step.timeout.unwrap_or(60 * 60));
-        let result = crate::pipeline::execute_stage_with_log_callback(
-            &resolved_step,
-            &step_result.id,
-            &run.id,
-            &env,
-            timeout,
-            Some(log_callback),
-            Some(cancel),
-        )
-        .await;
-
-        match result {
-            Ok(res) => {
-                *step_result = res.clone();
-
-                // Update step result in database
-                {
-                    let db = ctx.db.lock().await;
-                    let _ = db.update_step_result(step_result);
-                }
-
-                // Emit StepCompleted event
-                let status_str = step_status_str(res.status);
-                ctx.emit(AirlockEvent::StepCompleted {
-                    repo_id: run.repo_id.clone(),
-                    run_id: run.id.clone(),
-                    job_key: job_key.to_string(),
-                    step_name: step.name.clone(),
-                    status: status_str.to_string(),
-                });
-
-                // Check if we should pause for approval
-                if crate::pipeline::should_pause_for_approval(&res) {
-                    info!(
-                        "Job '{}' paused at step '{}' awaiting approval",
-                        job_key, step.name
-                    );
-                    paused_for_approval = true;
-                    break;
-                }
-
-                // Check if we should continue
-                if !crate::pipeline::should_continue_pipeline(&resolved_step, &res) {
-                    error!(
-                        "Job '{}' stopped at step '{}' due to failure",
-                        job_key, step.name
-                    );
-                    job_success = false;
-                    job_error = res.error.clone();
-                    break;
-                }
-
-                if res.status == StepStatus::Failed {
-                    warn!(
-                        "Step '{}' in job '{}' failed but continue_on_error=true, continuing",
-                        step.name, job_key
-                    );
-                }
-            }
-            Err(e) => {
-                error!(
-                    "Step '{}' in job '{}' execution error: {}",
-                    step.name, job_key, e
-                );
-                job_success = false;
-                job_error = Some(e.to_string());
-
-                // Update step as failed
-                {
-                    let db = ctx.db.lock().await;
-                    step_result.status = StepStatus::Failed;
-                    step_result.error = Some(e.to_string());
-                    let _ = db.update_step_result(step_result);
-                }
-
-                ctx.emit(AirlockEvent::StepCompleted {
-                    repo_id: run.repo_id.clone(),
-                    run_id: run.id.clone(),
-                    job_key: job_key.to_string(),
-                    step_name: step.name.clone(),
-                    status: "failed".to_string(),
-                });
-                break;
-            }
-        }
-    }
-
-    // Mark any remaining Pending steps as Skipped.
-    // This handles all early-break paths (execution errors, resolve failures,
-    // environment build failures) where remaining steps weren't cleaned up.
-    if !job_success {
-        let db = ctx.db.lock().await;
-        for remaining in step_results.iter_mut() {
-            if remaining.status == StepStatus::Pending {
-                remaining.status = StepStatus::Skipped;
-                let _ = db.update_step_result(remaining);
-            }
-        }
-    }
-
-    // Determine final job status
-    let final_status = if paused_for_approval {
-        JobStatus::AwaitingApproval
-    } else if job_success {
-        JobStatus::Passed
-    } else {
-        JobStatus::Failed
+    // Execute steps
+    let seq_params = StepSequenceParams {
+        ctx,
+        run,
+        repo,
+        job_key,
+        job_config_name: job_config.name.clone(),
+        worktree_path,
+        effective_base_sha: &effective_base_sha,
+        cancel: Some(cancel),
+        clear_approval_for_step: None,
     };
+
+    let (final_status, job_error) =
+        execute_step_sequence(&seq_params, &job_config.steps, &mut step_results).await;
 
     // Update job status
     {
         let db = ctx.db.lock().await;
-        let completed_at = if paused_for_approval {
+        let completed_at = if final_status == JobStatus::AwaitingApproval {
             None
         } else {
             Some(now_epoch())
@@ -950,7 +972,7 @@ pub(super) async fn execute_single_job(
         }
 
         // Clear current step if not paused
-        if !paused_for_approval {
+        if final_status != JobStatus::AwaitingApproval {
             let _ = db.update_run_current_step(&run.id, None);
         }
     }
@@ -1196,7 +1218,65 @@ async fn mark_run_cancelled(ctx: &Arc<HandlerContext>, run: &Run) {
         repo_id: run.repo_id.clone(),
         run_id: run.id.clone(),
         success: false,
+        branch: run.branch.clone(),
     });
+}
+
+/// Check the state of all jobs and emit appropriate run-level events.
+pub(super) async fn emit_run_final_status(ctx: &Arc<HandlerContext>, run: &Run) {
+    let (all_done, any_paused, any_failed, all_passed) = {
+        let db = ctx.db.lock().await;
+        match db.get_job_results_for_run(&run.id) {
+            Ok(jobs) => {
+                let all_done = jobs.iter().all(|j| j.status.is_final());
+                let any_paused = jobs.iter().any(|j| j.status == JobStatus::AwaitingApproval);
+                let any_failed = jobs.iter().any(|j| j.status == JobStatus::Failed);
+                let all_passed = jobs.iter().all(|j| j.status == JobStatus::Passed);
+                (all_done, any_paused, any_failed, all_passed)
+            }
+            Err(_) => (false, false, false, false),
+        }
+    };
+
+    if any_paused && !all_done {
+        // Some jobs are still paused — run is waiting for approval
+        ctx.emit(AirlockEvent::RunUpdated {
+            repo_id: run.repo_id.clone(),
+            run_id: run.id.clone(),
+            status: "awaiting_approval".to_string(),
+        });
+    } else if all_done {
+        if all_passed {
+            info!("Pipeline completed successfully for run {}", run.id);
+            ctx.emit(AirlockEvent::RunCompleted {
+                repo_id: run.repo_id.clone(),
+                run_id: run.id.clone(),
+                success: true,
+                branch: run.branch.clone(),
+            });
+        } else if any_failed {
+            error!("Pipeline failed for run {}", run.id);
+            let db = ctx.db.lock().await;
+            let _ = db.update_run_error(&run.id, Some("One or more jobs failed"));
+            drop(db);
+
+            ctx.emit(AirlockEvent::RunCompleted {
+                repo_id: run.repo_id.clone(),
+                run_id: run.id.clone(),
+                success: false,
+                branch: run.branch.clone(),
+            });
+        } else {
+            // All done but not all passed and none failed — e.g., all skipped
+            ctx.emit(AirlockEvent::RunCompleted {
+                repo_id: run.repo_id.clone(),
+                run_id: run.id.clone(),
+                success: false,
+                branch: run.branch.clone(),
+            });
+        }
+    }
+    // If not all done and none paused, there's likely still running jobs — don't emit
 }
 
 /// Get current epoch time in seconds.
