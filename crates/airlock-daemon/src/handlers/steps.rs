@@ -247,8 +247,30 @@ async fn resume_pipeline_after_approval(
         }
     };
 
-    // Get remaining steps after the approved one
-    let remaining_steps = &job_config.steps[(approved_idx + 1)..];
+    // Check if the approved step was paused before execution (pre-execution pause).
+    // If so, re-execute it. Otherwise, start from the next step.
+    let step_was_pre_paused = {
+        let db = ctx.db.lock().await;
+        match db.get_step_results_for_run(&run.id) {
+            Ok(results) => results
+                .iter()
+                .find(|r| r.name == approved_step_name)
+                .map(|r| r.exit_code.is_none())
+                .unwrap_or(false),
+            Err(_) => false,
+        }
+    };
+
+    let start_idx = if step_was_pre_paused {
+        info!(
+            "Step '{}' was paused before execution, re-executing",
+            approved_step_name
+        );
+        approved_idx
+    } else {
+        approved_idx + 1
+    };
+    let remaining_steps = &job_config.steps[start_idx..];
 
     // Handle case where approved step was the last in the job
     if remaining_steps.is_empty() {

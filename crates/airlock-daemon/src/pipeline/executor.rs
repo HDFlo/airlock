@@ -850,6 +850,18 @@ pub async fn execute_stage_with_log_callback(
         completed_at: None,
     };
 
+    // Pre-execution approval check for IfPatches mode.
+    // Pause BEFORE running the command so that patches can be applied before
+    // side-effecting steps (like push) execute.
+    if stage.require_approval == ApprovalMode::IfPatches && has_pending_patches(&env.artifacts) {
+        stage_result.status = StepStatus::AwaitingApproval;
+        info!(
+            "Stage '{}' paused before execution (pending patches)",
+            stage.name
+        );
+        return Ok(stage_result);
+    }
+
     // Execute the command with streaming if callback is provided
     let exec_result =
         execute_stage_command_with_streaming(stage, env, timeout, log_callback, cancel).await?;
@@ -1981,8 +1993,11 @@ mod tests {
         .await
         .unwrap();
 
-        // Patches exist → should pause
+        // Patches exist → should pause BEFORE execution (pre-execution gate)
         assert_eq!(result.status, StepStatus::AwaitingApproval);
+        // Command should NOT have run
+        assert_eq!(result.exit_code, None, "Command should not run when pre-paused");
+        assert_eq!(result.duration_ms, None, "No duration when pre-paused");
     }
 
     #[tokio::test]
@@ -2008,5 +2023,42 @@ mod tests {
 
         // No patches → should pass through
         assert_eq!(result.status, StepStatus::Passed);
+    }
+
+    #[tokio::test]
+    async fn test_execute_stage_if_patches_post_execution_pause() {
+        let temp_dir = TempDir::new().unwrap();
+        let env = create_test_env(&temp_dir);
+
+        // Stage command creates patches during execution (simulated by pre-creating
+        // a patches dir but using a command that also creates a patch file)
+        let patches_dir = env.artifacts.join("patches");
+
+        // The command itself creates a patch file during execution
+        let cmd = format!(
+            "mkdir -p '{}' && echo '{{}}' > '{}/new.json'",
+            patches_dir.display(),
+            patches_dir.display()
+        );
+        let mut stage = create_test_stage("lint-fixer", &cmd);
+        stage.require_approval = ApprovalMode::IfPatches;
+
+        let result = execute_stage_with_log_callback(
+            &stage,
+            "sr-1",
+            "run-1",
+            &env,
+            Duration::from_secs(10),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // No patches before execution → command runs
+        // Command creates patches → post-execution check catches them
+        assert_eq!(result.status, StepStatus::AwaitingApproval);
+        assert!(result.exit_code.is_some(), "Command should have run");
+        assert_eq!(result.exit_code, Some(0));
     }
 }
