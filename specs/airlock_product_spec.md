@@ -370,14 +370,14 @@ Properties from `step.yml` can be overridden inline:
 
 **Default steps** are published in this repo under `defaults/`:
 
-| Step        | Path                 | Description                             |
-| ----------- | -------------------- | --------------------------------------- |
-| `describe`  | `defaults/describe`  | Generate PR description via AI agent    |
-| `lint`      | `defaults/lint`      | Run linters/formatters, auto-fix issues |
-| `test`      | `defaults/test`      | Run tests, capture results              |
+| Step        | Path                 | Description                                                     |
+| ----------- | -------------------- | --------------------------------------------------------------- |
+| `describe`  | `defaults/describe`  | Generate PR description via AI agent                            |
+| `lint`      | `defaults/lint`      | Run linters/formatters, auto-fix issues                         |
+| `test`      | `defaults/test`      | Run tests, capture results                                      |
 | `critique`  | `defaults/critique`  | Critique diff for bugs, risks, and simplification opportunities |
-| `push`      | `defaults/push`      | Push changes to upstream remote         |
-| `create-pr` | `defaults/create-pr` | Create pull/merge request               |
+| `push`      | `defaults/push`      | Push changes to upstream remote                                 |
+| `create-pr` | `defaults/create-pr` | Create pull/merge request                                       |
 
 **Step structure:**
 

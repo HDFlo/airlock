@@ -87,6 +87,55 @@ pub struct EjectOutcome {
     pub upstream_url: String,
 }
 
+/// Information about an existing Airlock enrollment for a repository.
+pub struct ExistingEnrollment {
+    pub repo_id: String,
+    pub upstream_url: String,
+}
+
+/// Check if a repository is already enrolled in Airlock.
+///
+/// Returns `Some(ExistingEnrollment)` if the repo appears to be initialized
+/// (either via database record or presence of the bypass remote), or `None`
+/// if the repo is not enrolled.
+pub fn check_existing_enrollment(
+    working_dir: &Path,
+    db: &Database,
+) -> Result<Option<ExistingEnrollment>> {
+    let working_repo = match git::discover_repo(working_dir) {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+
+    let working_path = match working_repo.workdir() {
+        Some(p) => match p.to_path_buf().canonicalize() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        },
+        None => return Ok(None),
+    };
+
+    // Check database first
+    if let Some(existing) = db.get_repo_by_path(&working_path)? {
+        return Ok(Some(ExistingEnrollment {
+            repo_id: existing.id,
+            upstream_url: existing.upstream_url,
+        }));
+    }
+
+    // Check for bypass remote (partially initialized or DB was cleared)
+    if git::remote_exists(&working_repo, BYPASS_REMOTE) {
+        let upstream_url = git::get_remote_url(&working_repo, BYPASS_REMOTE)
+            .unwrap_or_else(|_| "unknown".to_string());
+        return Ok(Some(ExistingEnrollment {
+            repo_id: String::new(),
+            upstream_url,
+        }));
+    }
+
+    Ok(None)
+}
+
 /// Generate a repo ID from the origin URL and working path.
 /// Uses a hash of the combined string for uniqueness.
 pub fn generate_repo_id(origin_url: &str, working_path: &Path) -> String {
@@ -498,6 +547,104 @@ pub fn eject_repo(working_dir: &Path, paths: &AirlockPaths, db: &Database) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use tempfile::TempDir;
+
+    fn create_test_repo(dir: &std::path::Path, origin_url: &str) -> git2::Repository {
+        let repo = git2::Repository::init(dir).unwrap();
+        {
+            let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+                .unwrap();
+        }
+        repo.remote("origin", origin_url).unwrap();
+        repo
+    }
+
+    #[test]
+    fn test_check_existing_enrollment_returns_none_for_fresh_repo() {
+        let temp = TempDir::new().unwrap();
+        let working_dir = temp.path().join("working");
+        let airlock_root = temp.path().join("airlock");
+        std::fs::create_dir_all(&working_dir).unwrap();
+
+        create_test_repo(&working_dir, "https://github.com/user/repo.git");
+
+        let paths = AirlockPaths::with_root(airlock_root);
+        paths.ensure_dirs().unwrap();
+        let db = Database::open(&paths.database()).unwrap();
+
+        let result = check_existing_enrollment(&working_dir, &db).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_check_existing_enrollment_detects_database_record() {
+        let temp = TempDir::new().unwrap();
+        let working_dir = temp.path().join("working");
+        let airlock_root = temp.path().join("airlock");
+        std::fs::create_dir_all(&working_dir).unwrap();
+
+        create_test_repo(&working_dir, "https://github.com/user/repo.git");
+
+        let paths = AirlockPaths::with_root(airlock_root);
+        paths.ensure_dirs().unwrap();
+        let db = Database::open(&paths.database()).unwrap();
+
+        let canonical = working_dir.canonicalize().unwrap();
+        let repo = Repo {
+            id: "abc123def456".to_string(),
+            working_path: canonical,
+            upstream_url: "https://github.com/user/repo.git".to_string(),
+            gate_path: temp.path().join("gate.git"),
+            last_sync: None,
+            created_at: now(),
+        };
+        db.insert_repo(&repo).unwrap();
+
+        let result = check_existing_enrollment(&working_dir, &db).unwrap();
+        assert!(result.is_some());
+        let enrollment = result.unwrap();
+        assert_eq!(enrollment.repo_id, "abc123def456");
+        assert_eq!(enrollment.upstream_url, "https://github.com/user/repo.git");
+    }
+
+    #[test]
+    fn test_check_existing_enrollment_detects_bypass_remote() {
+        let temp = TempDir::new().unwrap();
+        let working_dir = temp.path().join("working");
+        let airlock_root = temp.path().join("airlock");
+        std::fs::create_dir_all(&working_dir).unwrap();
+
+        let repo = create_test_repo(&working_dir, "https://github.com/user/repo.git");
+        // Simulate partially initialized state: rename origin to bypass-airlock
+        git::rename_remote(&repo, "origin", BYPASS_REMOTE).unwrap();
+
+        let paths = AirlockPaths::with_root(airlock_root);
+        paths.ensure_dirs().unwrap();
+        let db = Database::open(&paths.database()).unwrap();
+
+        let result = check_existing_enrollment(&working_dir, &db).unwrap();
+        assert!(result.is_some());
+        let enrollment = result.unwrap();
+        assert!(enrollment.repo_id.is_empty()); // No DB record
+        assert_eq!(enrollment.upstream_url, "https://github.com/user/repo.git");
+    }
+
+    #[test]
+    fn test_check_existing_enrollment_returns_none_for_non_git_dir() {
+        let temp = TempDir::new().unwrap();
+        let airlock_root = temp.path().join("airlock");
+
+        let paths = AirlockPaths::with_root(airlock_root);
+        paths.ensure_dirs().unwrap();
+        let db = Database::open(&paths.database()).unwrap();
+
+        let result = check_existing_enrollment(temp.path(), &db).unwrap();
+        assert!(result.is_none());
+    }
 
     #[test]
     fn test_generate_repo_id() {

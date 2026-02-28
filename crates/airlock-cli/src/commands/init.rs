@@ -1,6 +1,7 @@
 //! `airlock init` command implementation.
 
 use anyhow::{Context, Result};
+use dialoguer::Confirm;
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -13,6 +14,11 @@ use super::init_wizard;
 /// Run the init command to set up Airlock in the current repository.
 pub async fn run() -> Result<()> {
     let paths = AirlockPaths::new().context("Failed to initialize Airlock paths")?;
+    let current_dir = env::current_dir().context("Failed to get current directory")?;
+
+    // Check if the repo is already enrolled and handle reinstall confirmation
+    check_and_handle_existing(&current_dir, &paths)?;
+
     let first_time = !paths.global_config().exists();
 
     // Run the interactive wizard
@@ -25,8 +31,7 @@ pub async fn run() -> Result<()> {
         }
     }
 
-    // Run the existing init logic (unchanged)
-    let current_dir = env::current_dir().context("Failed to get current directory")?;
+    // Run the init logic
     run_with_paths(&current_dir, &paths)?;
 
     // If user opted out of approval, patch the workflow YAML
@@ -48,6 +53,44 @@ pub async fn run() -> Result<()> {
             println!("  airlock daemon start");
         }
     }
+
+    Ok(())
+}
+
+/// Check if the repository is already enrolled and prompt for reinstall.
+///
+/// If the repo is already initialized, asks the user whether to reinstall.
+/// On confirmation, ejects first so init can proceed cleanly.
+fn check_and_handle_existing(working_dir: &Path, paths: &AirlockPaths) -> Result<()> {
+    paths
+        .ensure_dirs()
+        .context("Failed to create Airlock directories")?;
+    let db = Database::open(&paths.database()).context("Failed to open Airlock database")?;
+
+    let existing = init::check_existing_enrollment(working_dir, &db)?;
+    let Some(enrollment) = existing else {
+        return Ok(());
+    };
+
+    println!(
+        "This repository is already set up with Airlock (upstream: {}).",
+        enrollment.upstream_url
+    );
+
+    let reinstall = Confirm::new()
+        .with_prompt("Would you like to reinstall Airlock?")
+        .default(false)
+        .interact()?;
+
+    if !reinstall {
+        anyhow::bail!("Init cancelled.");
+    }
+
+    println!();
+    println!("Ejecting existing Airlock setup...");
+    init::eject_repo(working_dir, paths, &db)?;
+    println!("Done. Re-initializing...");
+    println!();
 
     Ok(())
 }
