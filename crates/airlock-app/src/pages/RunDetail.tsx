@@ -133,6 +133,14 @@ export function RunDetail() {
     ).length;
   }, [detail?.artifacts]);
 
+  // Count comment files for Critique tab badge
+  const commentCount = useMemo(() => {
+    if (!detail?.artifacts) return 0;
+    return detail.artifacts.filter(
+      (a) => a.artifact_type === 'file' && a.path.includes('/comments/') && a.path.endsWith('.json')
+    ).length;
+  }, [detail?.artifacts]);
+
   // Store active tab in URL search params so it survives refreshes and is shareable
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -253,7 +261,10 @@ export function RunDetail() {
               </TabsTrigger>
               <TabsTrigger variant="line" value="changes">
                 <FileDiff className="mr-2 h-4 w-4" />
-                Changes
+                Critique
+                {commentCount > 0 && (
+                  <span className="bg-signal/20 text-micro ml-2 rounded-full px-2 py-0.5">{commentCount}</span>
+                )}
               </TabsTrigger>
               <TabsTrigger variant="line" value="content">
                 <BookOpen className="mr-2 h-4 w-4" />
