@@ -2,19 +2,19 @@
 
 use anyhow::Result;
 use console::Style;
-use dialoguer::{Confirm, Select};
+use dialoguer::Select;
 
 use airlock_core::{
-    check_provider_setup, AgentAdapter, ClaudeCodeAdapter, CodexAdapter, ProviderCheck,
-    ScmProvider, BANNER, BRAND_COLOR_256,
+    check_provider_setup, AgentAdapter, ApprovalMode, ClaudeCodeAdapter, CodexAdapter,
+    ProviderCheck, ScmProvider, BANNER, BRAND_COLOR_256,
 };
 
 /// Result of the init wizard.
 pub struct WizardResult {
     /// Agent adapter choice (only Some if first-time setup).
     pub agent_adapter: Option<String>,
-    /// Whether to require human approval before pushing to upstream.
-    pub require_approval: bool,
+    /// Approval mode for the push step.
+    pub approval_mode: ApprovalMode,
 }
 
 /// Run the init wizard.
@@ -37,11 +37,22 @@ pub fn run_wizard(first_time_setup: bool) -> Result<WizardResult> {
         None
     };
 
-    // Repo-level: require approval
-    let require_approval = Confirm::new()
+    // Repo-level: approval mode
+    let approval_items = vec![
+        "Always (recommended)",
+        "Only when there are patches to review",
+        "Never",
+    ];
+    let approval_selection = Select::new()
         .with_prompt("Require human approval before pushing to upstream?")
-        .default(true)
+        .items(&approval_items)
+        .default(0)
         .interact()?;
+    let approval_mode = match approval_selection {
+        0 => ApprovalMode::Always,
+        1 => ApprovalMode::IfPatches,
+        _ => ApprovalMode::Never,
+    };
 
     println!();
 
@@ -53,7 +64,7 @@ pub fn run_wizard(first_time_setup: bool) -> Result<WizardResult> {
 
     Ok(WizardResult {
         agent_adapter,
-        require_approval,
+        approval_mode,
     })
 }
 

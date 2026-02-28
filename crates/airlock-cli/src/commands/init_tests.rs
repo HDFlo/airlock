@@ -769,7 +769,7 @@ fn test_init_creates_default_config() {
 }
 
 #[test]
-fn test_init_does_not_overwrite_existing_config() {
+fn test_init_overwrites_existing_config() {
     let temp_dir = TempDir::new().unwrap();
     let working_dir = temp_dir.path().join("working");
     let remote_dir = temp_dir.path().join("remote.git");
@@ -793,10 +793,11 @@ fn test_init_does_not_overwrite_existing_config() {
     let result = run_with_paths(&working_dir, &paths);
     assert!(result.is_ok(), "init failed: {:?}", result.err());
 
+    // Init should overwrite with the default config
     let config_content = fs::read_to_string(&workflow_path).unwrap();
-    assert_eq!(config_content, custom_config);
-    assert!(config_content.contains("custom-stage"));
-    assert!(!config_content.contains("name: describe"));
+    assert!(!config_content.contains("custom-stage"));
+    assert!(config_content.contains("name: describe"));
+    assert!(config_content.contains("require-approval: true"));
 }
 
 #[test]

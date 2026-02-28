@@ -325,20 +325,16 @@ fn do_init(
         .context("Failed to record repository in database")?;
     debug!("Recorded repo in database");
 
-    // Create default .airlock/workflows/main.yml if it doesn't exist
+    // Create/overwrite .airlock/workflows/main.yml with default config.
+    // Init is explicit enough that users expect a fresh start.
     let workflows_dir = working_path.join(REPO_CONFIG_PATH);
     let workflow_path = workflows_dir.join(DEFAULT_WORKFLOW_FILENAME);
-    let config_created = if !workflow_path.exists() {
-        std::fs::create_dir_all(&workflows_dir)
-            .context("Failed to create .airlock/workflows directory")?;
-        std::fs::write(&workflow_path, DEFAULT_WORKFLOW_YAML)
-            .context("Failed to create .airlock/workflows/main.yml")?;
-        debug!("Created default .airlock/workflows/main.yml");
-        true
-    } else {
-        debug!(".airlock/workflows/main.yml already exists, skipping creation");
-        false
-    };
+    std::fs::create_dir_all(&workflows_dir)
+        .context("Failed to create .airlock/workflows directory")?;
+    std::fs::write(&workflow_path, DEFAULT_WORKFLOW_YAML)
+        .context("Failed to create .airlock/workflows/main.yml")?;
+    debug!("Created default .airlock/workflows/main.yml");
+    let config_created = true;
 
     // Initial sync from origin
     info!("Syncing from origin...");

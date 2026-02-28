@@ -7,7 +7,7 @@ use std::fs;
 use std::path::Path;
 use tracing::warn;
 
-use airlock_core::{config::GlobalConfig, init, AgentGlobalConfig, AirlockPaths, Database};
+use airlock_core::{config::GlobalConfig, init, AgentGlobalConfig, AirlockPaths, ApprovalMode, Database};
 
 use super::init_wizard;
 
@@ -34,10 +34,8 @@ pub async fn run() -> Result<()> {
     // Run the init logic
     run_with_paths(&current_dir, &paths)?;
 
-    // If user opted out of approval, patch the workflow YAML
-    if !wizard_result.require_approval {
-        patch_workflow_approval(&current_dir)?;
-    }
+    // Patch the workflow YAML with the chosen approval mode
+    patch_workflow_approval(&current_dir, wizard_result.approval_mode)?;
 
     // Ensure the daemon is running (fallback auto-start)
     match super::ipc_client::ensure_daemon_running(&paths).await {
@@ -120,8 +118,13 @@ fn write_global_config(paths: &AirlockPaths, adapter: &str) -> Result<()> {
     Ok(())
 }
 
-/// Patch the default workflow to disable the require-approval gate.
-fn patch_workflow_approval(working_dir: &Path) -> Result<()> {
+/// Patch the default workflow to set the chosen approval mode.
+fn patch_workflow_approval(working_dir: &Path, mode: ApprovalMode) -> Result<()> {
+    if mode == ApprovalMode::Always {
+        // Default YAML already has `require-approval: true`, nothing to patch
+        return Ok(());
+    }
+
     let workflow_path = working_dir
         .join(init::REPO_CONFIG_PATH)
         .join(init::DEFAULT_WORKFLOW_FILENAME);
@@ -130,8 +133,14 @@ fn patch_workflow_approval(working_dir: &Path) -> Result<()> {
         return Ok(());
     }
 
+    let replacement = match mode {
+        ApprovalMode::Never => "require-approval: false",
+        ApprovalMode::IfPatches => "require-approval: if_patches",
+        ApprovalMode::Always => unreachable!(),
+    };
+
     let content = fs::read_to_string(&workflow_path)?;
-    let patched = content.replace("require-approval: true", "require-approval: false");
+    let patched = content.replace("require-approval: true", replacement);
     fs::write(&workflow_path, patched)?;
 
     Ok(())
