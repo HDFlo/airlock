@@ -502,6 +502,8 @@ defaults/
 │   └── step.yml
 ├── test/
 │   └── step.yml
+├── critique/
+│   └── step.yml
 ├── push/
 │   └── step.yml
 └── create-pr/
@@ -575,6 +577,8 @@ jobs:
       - name: test
         uses: airlock-hq/airlock/defaults/test@main
         continue-on-error: true
+      - name: critique
+        uses: airlock-hq/airlock/defaults/critique@main
       - name: review
         run: 'true'
         require-approval: true
@@ -1050,6 +1054,8 @@ airlock/
 │   ├── lint/
 │   │   └── step.yml
 │   ├── test/
+│   │   └── step.yml
+│   ├── critique/
 │   │   └── step.yml
 │   ├── push/
 │   │   └── step.yml

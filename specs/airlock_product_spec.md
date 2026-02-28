@@ -375,6 +375,7 @@ Properties from `step.yml` can be overridden inline:
 | `describe`  | `defaults/describe`  | Generate PR description via AI agent    |
 | `lint`      | `defaults/lint`      | Run linters/formatters, auto-fix issues |
 | `test`      | `defaults/test`      | Run tests, capture results              |
+| `critique`  | `defaults/critique`  | Critique diff for bugs, risks, and simplification opportunities |
 | `push`      | `defaults/push`      | Push changes to upstream remote         |
 | `create-pr` | `defaults/create-pr` | Create pull/merge request               |
 
@@ -429,6 +430,8 @@ jobs:
       - name: test
         uses: airlock-hq/airlock/defaults/test@main
         continue-on-error: true
+      - name: critique
+        uses: airlock-hq/airlock/defaults/critique@main
       - name: review
         run: 'true'
         require-approval: true

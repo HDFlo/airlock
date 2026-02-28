@@ -68,7 +68,7 @@ Airlock handles the basic review, validation and clean up, so you can focus on m
 
 1. `airlock init` reroutes your `origin` remote to a local bare repo (a "gate")
 2. When you `git push`, a daemon picks up the push and runs your pipeline
-3. Pipeline jobs run in a temporary worktree — lint, test, describe, review
+3. Pipeline jobs run in a temporary worktree — lint, test, describe, critique, review
 4. Results appear as a **Push Request** you can review in the Airlock desktop app
 5. You review and approve the change to exit the airlock, get pushed upstream and become a clean PR
 
@@ -90,6 +90,8 @@ steps:
     uses: airlock-hq/airlock/defaults/document@main
   - name: test
     uses: airlock-hq/airlock/defaults/test@main
+  - name: critique
+    uses: airlock-hq/airlock/defaults/critique@main
   - name: push
     uses: airlock-hq/airlock/defaults/push@main
     require-approval: true
