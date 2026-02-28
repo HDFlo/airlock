@@ -53,6 +53,8 @@ During `airlock init`, you'll choose how strict the push gate should be:
 - `Only when there are patches` (`require-approval: if_patches`)
 - `Never` (`require-approval: false`)
 
+`airlock init` creates or overwrites `.airlock/workflows/main.yml` with the default workflow, then applies your selected approval mode.
+
 To bypass Airlock at any time: `git push bypass-airlock main`
 
 ## What It Does
@@ -79,7 +81,7 @@ Airlock handles the basic review, validation and clean up, so you can focus on m
 
 ### Pipeline
 
-Defined in `.airlock/config.yml` using a familiar YAML workflow syntax:
+Defined in `.airlock/workflows/main.yml` using a familiar YAML workflow syntax:
 
 ```yaml
 steps:
@@ -107,6 +109,8 @@ steps:
 The **freeze** step splits the pipeline: stages before it auto-apply fixes (formatting, lint), stages after it produce review artifacts without modifying code.
 
 Steps can be inline shell commands or reusable definitions loaded from Git repos via `uses:`.
+
+The desktop app runs from the system tray: closing the window hides it, and new pushes trigger an OS notification.
 
 ## Architecture
 
