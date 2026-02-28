@@ -689,10 +689,11 @@ The main view where users review and approve changes:
 - Comments summarized with severity counts
 - Quick stats (files changed, tests passed)
 
-**Changes Tab:**
+**Critique Tab:**
 
 - Standard diff view
 - Inline comments from review stages anchored to specific lines
+- Tab badge shows the number of comment artifacts available
 - Click comment to jump to location
 
 **Patches Tab:**

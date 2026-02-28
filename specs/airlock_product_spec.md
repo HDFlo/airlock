@@ -149,7 +149,7 @@ The Push Request view is where you review and approve changes before they ship.
 │  Push Request: feature/add-auth                        [Approve]│
 │  3 commits • 5 files changed • Ready for review                 │
 ├─────────────────────────────────────────────────────────────────┤
-│  [Overview] [Changes] [Patches] [Activity]                      │
+│  [Overview] [Critique] [Patches] [Activity]                     │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ## Summary                                (from describe stage)│
@@ -183,10 +183,11 @@ The Push Request view is where you review and approve changes before they ship.
 - Code review comments summarized
 - Test evidence and results
 
-**Changes** — Diff viewer with inline comments:
+**Critique** — Diff viewer with inline comments:
 
 - Standard diff view
 - Comments from review stages anchored to specific lines
+- Tab badge shows the number of critique comments
 - Click a comment to jump to that location
 
 **Patches** — Suggested fixes from stages:
