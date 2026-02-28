@@ -266,6 +266,20 @@ fn emit_event_to_frontend<R: tauri::Runtime>(
         warn!("Failed to emit event to frontend: {}", e);
     }
 
+    // Send OS notification for new pushes
+    if let AirlockEvent::RunCreated { branch, .. } = event {
+        use tauri_plugin_notification::NotificationExt;
+        if let Err(e) = app_handle
+            .notification()
+            .builder()
+            .title("Airlock")
+            .body(format!("Push received on {}", branch))
+            .show()
+        {
+            warn!("Failed to send push notification: {}", e);
+        }
+    }
+
     // Also emit specific event types for easier subscription
     let (event_name, payload) = match event {
         AirlockEvent::RunCreated {
