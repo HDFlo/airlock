@@ -15,7 +15,7 @@ use crate::ipc::{
 use crate::pipeline::LogStreamCallback;
 use crate::stage_loader::StageLoader;
 use airlock_core::git::compute_diff_with_commits;
-use airlock_core::{JobStatus, StepStatus};
+use airlock_core::{ApprovalMode, JobStatus, StepStatus};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
@@ -388,7 +388,7 @@ async fn resume_pipeline_after_approval(
         info!("Executing step '{}' (resumed after approval)", step.name);
 
         // Resolve reusable stage if using `uses:` syntax
-        let resolved_step = if step.is_reusable() {
+        let mut resolved_step = if step.is_reusable() {
             debug!("Resolving reusable action: {:?}", step.uses);
             match stage_loader.resolve_stage(step).await {
                 Ok(resolved) => resolved,
@@ -408,6 +408,12 @@ async fn resume_pipeline_after_approval(
         } else {
             step.clone()
         };
+
+        // If this is the pre-paused step being re-executed after approval,
+        // clear the approval gate — the user already approved.
+        if step_was_pre_paused && step.name == approved_step_name {
+            resolved_step.require_approval = ApprovalMode::Never;
+        }
 
         // Build environment for this step
         let env_params = crate::pipeline::StageEnvironmentParams {
