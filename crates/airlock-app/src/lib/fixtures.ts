@@ -30,6 +30,7 @@ import artifactPatchFixTypos from '../../fixtures/read_artifact/patch-fix-typos.
 import artifactPushResultFailed from '../../fixtures/read_artifact/push-result-failed.json';
 import artifactTestResults from '../../fixtures/read_artifact/test-results.json';
 import artifactPushResultSuccess from '../../fixtures/read_artifact/push-result-success.json';
+import artifactCritiqueComments from '../../fixtures/read_artifact/critique-comments.json';
 
 // Import run diffs
 import diffFce62dbf from '../../fixtures/get_run_diff/fce62dbf-ad28-4f7e-b3c5-e60d956d73ad.json';
@@ -56,6 +57,8 @@ const artifactPathMappings: Record<string, string> = {
     '/Users/bakerxiao/.airlock/artifacts/85960af40743/fce62dbf-ad28-4f7e-b3c5-e60d956d73ad/content/test-results-aaa.md',
   'push-result-success':
     '/Users/bakerxiao/.airlock/artifacts/85960af40743/fce62dbf-ad28-4f7e-b3c5-e60d956d73ad/content/push-result-bbb.md',
+  'critique-comments':
+    '/Users/bakerxiao/.airlock/artifacts/85960af40743/fce62dbf-ad28-4f7e-b3c5-e60d956d73ad/comments/critique-comments.json',
 };
 
 // =============================================================================
@@ -218,6 +221,7 @@ const artifactContentByHash: Record<string, ReadArtifactResult> = {
   'push-result-failed': artifactPushResultFailed as ReadArtifactResult,
   'test-results': artifactTestResults as ReadArtifactResult,
   'push-result-success': artifactPushResultSuccess as ReadArtifactResult,
+  'critique-comments': artifactCritiqueComments as ReadArtifactResult,
 };
 
 /**

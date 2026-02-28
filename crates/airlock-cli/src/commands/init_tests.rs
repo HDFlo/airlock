@@ -762,6 +762,7 @@ fn test_init_creates_default_config() {
     assert!(config_content.contains("name: freeze"));
     assert!(config_content.contains("name: describe"));
     assert!(config_content.contains("name: test"));
+    assert!(config_content.contains("name: critique"));
     assert!(config_content.contains("name: push"));
     assert!(config_content.contains("name: create-pr"));
     assert!(config_content.contains("require-approval: true"));

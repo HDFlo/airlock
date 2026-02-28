@@ -1,0 +1,7 @@
+{
+  "content": "{\"comments\":[{\"file\":\"src/database.ts\",\"line\":5,\"message\":\"The connection pool is created on every import. Consider using a singleton pattern or lazy initialization to avoid multiple pool instances.\",\"severity\":\"warning\"},{\"file\":\"src/database.ts\",\"line\":13,\"message\":\"client.release() in the finally block will swallow the original error if release() itself throws. Consider wrapping release() in a try-catch.\",\"severity\":\"error\"},{\"file\":\".airlock/config.yml\",\"line\":13,\"message\":\"Piping into airlock artifact content is cleaner than the heredoc approach — good simplification.\",\"severity\":\"info\"}]}",
+  "is_binary": false,
+  "total_size": 600,
+  "bytes_read": 600,
+  "offset": 0
+}

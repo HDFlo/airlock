@@ -38,6 +38,7 @@ const BUNDLED_DOCUMENT: &str = include_str!("../../../defaults/document/step.yml
 const BUNDLED_TEST: &str = include_str!("../../../defaults/test/step.yml");
 const BUNDLED_DESCRIBE: &str = include_str!("../../../defaults/describe/step.yml");
 const BUNDLED_PUSH: &str = include_str!("../../../defaults/push/step.yml");
+const BUNDLED_CRITIQUE: &str = include_str!("../../../defaults/critique/step.yml");
 const BUNDLED_CREATE_PR: &str = include_str!("../../../defaults/create-pr/step.yml");
 
 /// TTL for mutable ref caches (branches, semver-major). 1 hour.
@@ -126,6 +127,7 @@ fn get_bundled_default(reference: &StageReference) -> Option<&'static str> {
         "defaults/test" => Some(BUNDLED_TEST),
         "defaults/describe" => Some(BUNDLED_DESCRIBE),
         "defaults/push" => Some(BUNDLED_PUSH),
+        "defaults/critique" => Some(BUNDLED_CRITIQUE),
         "defaults/create-pr" => Some(BUNDLED_CREATE_PR),
         _ => None,
     }
@@ -1029,6 +1031,7 @@ shell: bash
             "defaults/test",
             "defaults/describe",
             "defaults/push",
+            "defaults/critique",
             "defaults/create-pr",
         ];
         for path in &defaults {
@@ -1088,6 +1091,7 @@ shell: bash
             BUNDLED_TEST,
             BUNDLED_DESCRIBE,
             BUNDLED_PUSH,
+            BUNDLED_CRITIQUE,
             BUNDLED_CREATE_PR,
         ];
         for yaml_str in &defaults {

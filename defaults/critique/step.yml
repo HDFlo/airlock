@@ -1,0 +1,80 @@
+description: Critique the code change for bugs, risks, and refactor opportunities
+shell: bash
+continue-on-error: true
+run: |
+  set -euo pipefail
+
+  DIFF=$(git diff --no-color "$AIRLOCK_BASE_SHA" "$AIRLOCK_HEAD_SHA")
+  if [[ -z "$DIFF" ]]; then
+      echo "No changes to critique"
+      exit 0
+  fi
+
+  # Build prompt for agent-driven critique
+  PROMPT="You are a senior code reviewer. Your task is to critique a code change for bugs, risks, and simplification opportunities.
+
+  ## Changes
+  Base SHA: $AIRLOCK_BASE_SHA
+  Head SHA: $AIRLOCK_HEAD_SHA
+
+  ## Your Task
+
+  1. **Read the diff** between the base and head SHAs to understand the change and surrounding context.
+  2. **Critique should focus only on new/updated code**
+  3. **Analyze for:**
+     - **Bugs**: Logic errors, problematic boundary cases, typos etc
+     - **Risks**: Security issues, performance regressions, breaking changes, insufficient error handling
+     - **Simplification**: Unnecessary complexity, dead code, duplicates, opportunities to simplify
+
+  ## Rules
+  - Anchor every comment to a specific file and one-indexed line number in the changed code.
+  - Use severity levels: \"error\" for bugs, \"warning\" for risks, \"info\" for simplification suggestions.
+  - Be concise and actionable. No generic advice like \"add more tests\" or \"improve docs\".
+  - Only comment on things that genuinely matter. If the code is clean, return an empty comments array.
+  - Do NOT report styling, formatting, linting, compilation, typing errors (a separate lint step handles that).
+
+  ## Output Format
+  Respond with JSON:
+  {
+    \"comments\": [
+      {\"file\": \"path/to/file.ts\", \"line\": 42, \"message\": \"Concise finding\", \"severity\": \"error|warning|info\"}
+    ],
+    \"summary\": \"One-sentence summary of the critique\"
+  }"
+
+  # Define output schema for structured response
+  SCHEMA='{"type":"object","properties":{"comments":{"type":"array","items":{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"message":{"type":"string"},"severity":{"type":"string","enum":["error","warning","info"]}},"required":["file","line","message","severity"]}},"summary":{"type":"string"}},"required":["comments","summary"]}'
+
+  echo "Starting agent-driven code critique..."
+
+  # Run the agent
+  RESPONSE=$(airlock exec agent "$PROMPT" --output-schema "$SCHEMA")
+
+  # Parse response
+  SUMMARY=$(echo "$RESPONSE" | airlock exec json summary)
+  COMMENTS=$(echo "$RESPONSE" | jq -c '.comments')
+  COMMENT_COUNT=$(echo "$COMMENTS" | jq 'length')
+
+  echo "Critique complete: $COMMENT_COUNT comment(s)"
+  echo "Summary: $SUMMARY"
+
+  # Write comments as artifact (if any)
+  if [[ "$COMMENT_COUNT" -gt 0 ]]; then
+      # Write batch file and submit as comment artifact
+      BATCH_FILE=$(mktemp)
+      echo "$COMMENTS" > "$BATCH_FILE"
+      airlock artifact comment --batch-file "$BATCH_FILE"
+      rm -f "$BATCH_FILE"
+  fi
+
+  # Write summary as content artifact
+  {
+    if [[ "$COMMENT_COUNT" -gt 0 ]]; then
+        printf "## Code Critique\n\n"
+        printf "**%d comment(s)** found.\n\n" "$COMMENT_COUNT"
+        printf "%s\n" "$SUMMARY"
+    else
+        printf "## Code Critique\n\n"
+        printf "No issues found. %s\n" "$SUMMARY"
+    fi
+  } | airlock artifact content --title "Code Critique"

@@ -102,12 +102,23 @@
       "id": "b1a2c3d4-1111-4aaa-bbbb-000000000007",
       "job_id": "job-fce62dbf-default",
       "job_key": "default",
-      "step": "push",
-      "status": "awaiting_approval",
-      "started_at": 1771950879
+      "step": "critique",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 18200,
+      "started_at": 1771950879,
+      "completed_at": 1771950897
     },
     {
       "id": "b1a2c3d4-1111-4aaa-bbbb-000000000008",
+      "job_id": "job-fce62dbf-default",
+      "job_key": "default",
+      "step": "push",
+      "status": "awaiting_approval",
+      "started_at": 1771950897
+    },
+    {
+      "id": "b1a2c3d4-1111-4aaa-bbbb-000000000009",
       "job_id": "job-fce62dbf-default",
       "job_key": "default",
       "step": "create-pr",
@@ -135,6 +146,13 @@
       "artifact_type": "file",
       "size_bytes": 210,
       "created_at": 1771950879
+    },
+    {
+      "name": "critique-comments.json",
+      "path": "/Users/bakerxiao/.airlock/artifacts/85960af40743/fce62dbf-ad28-4f7e-b3c5-e60d956d73ad/comments/critique-comments.json",
+      "artifact_type": "file",
+      "size_bytes": 600,
+      "created_at": 1771950897
     },
     {
       "name": "patch-fix-import.json",

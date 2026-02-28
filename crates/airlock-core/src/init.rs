@@ -60,6 +60,10 @@ jobs:
       - name: test
         uses: airlock-hq/airlock/defaults/test@main
 
+      # Critique the code change for bugs, risks, and simplification opportunities
+      - name: critique
+        uses: airlock-hq/airlock/defaults/critique@main
+
       # Push changes to upstream (pauses for user approval first)
       - name: push
         uses: airlock-hq/airlock/defaults/push@main
