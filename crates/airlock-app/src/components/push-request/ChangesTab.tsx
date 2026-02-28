@@ -368,7 +368,7 @@ function CommentAnnotation({ comment }: CommentAnnotationProps) {
   return (
     <div
       className={cn(
-        'text-small my-1 rounded border-l-2 px-3 py-2 whitespace-normal break-words',
+        'text-small my-1 rounded border-l-2 px-3 py-2 break-words whitespace-normal',
         comment.severity === 'error' && 'border-danger bg-danger/10',
         comment.severity === 'warning' && 'border-warning bg-warning/10',
         comment.severity === 'info' && 'border-signal bg-signal/10'

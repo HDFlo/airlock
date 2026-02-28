@@ -1996,7 +1996,10 @@ mod tests {
         // Patches exist → should pause BEFORE execution (pre-execution gate)
         assert_eq!(result.status, StepStatus::AwaitingApproval);
         // Command should NOT have run
-        assert_eq!(result.exit_code, None, "Command should not run when pre-paused");
+        assert_eq!(
+            result.exit_code, None,
+            "Command should not run when pre-paused"
+        );
         assert_eq!(result.duration_ms, None, "No duration when pre-paused");
     }
 
