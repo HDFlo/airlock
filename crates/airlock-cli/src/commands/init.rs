@@ -7,7 +7,9 @@ use std::fs;
 use std::path::Path;
 use tracing::warn;
 
-use airlock_core::{config::GlobalConfig, init, AgentGlobalConfig, AirlockPaths, ApprovalMode, Database};
+use airlock_core::{
+    config::GlobalConfig, init, AgentGlobalConfig, AirlockPaths, ApprovalMode, Database,
+};
 
 use super::init_wizard;
 

@@ -56,7 +56,7 @@ git push origin feature-branch
 3. Renames `origin` to `bypass-airlock` (preserved as escape hatch)
 4. Sets `origin` to point to the local gate
 5. Registers the repo with the Airlock daemon
-6. Creates `.airlock/config.yml` with the default pipeline configuration
+6. Creates or overwrites `.airlock/workflows/main.yml` with the default pipeline, then applies your selected approval mode (`true`, `if_patches`, or `false`) to the push gate
 
 **Post-init state:**
 
@@ -288,7 +288,7 @@ Stages are defined in `.airlock/config.yml` and execute in order. Each stage run
 | `run`               | string  | —           | Shell command to execute                                                                               |
 | `shell`             | string  | login shell | Shell to use (sh, bash, zsh). Omit to use `$SHELL -l` for full user environment (API keys, PATH, etc.) |
 | `continue_on_error` | boolean | `false`     | Continue pipeline if stage fails                                                                       |
-| `require_approval`  | boolean | `false`     | Pause pipeline for user approval                                                                       |
+| `require_approval`  | boolean or string | `false`     | Pause pipeline for user approval (`true`, `false`, or `if_patches`)                                                                       |
 
 ### 5.2 Artifact Types
 

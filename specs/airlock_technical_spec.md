@@ -125,6 +125,7 @@ When a user runs `airlock init` in their working repository:
 6. Install `pre-receive` and `post-receive` hooks in bare repo
 7. Trigger initial sync from origin
 8. Record repo in SQLite state database
+9. Create or overwrite `.airlock/workflows/main.yml` with the default workflow, then apply the selected approval mode for the push gate (`true`, `if_patches`, or `false`)
 
 **Post-init remote layout:**
 
@@ -151,7 +152,7 @@ When the user runs `git push origin <branch>`:
 3. Hook exits 0 (soft gate — we accept the push locally)
 4. `post-receive` hook triggers the transformation pipeline asynchronously
 5. User continues working while pipeline runs
-6. Desktop app shows notification when review is ready
+6. Desktop app shows an OS notification when a new push is received
 7. User reviews changes and approves/rejects
 
 **Why soft gate?** A hard gate (rejecting the push) would block the user's workflow. By accepting locally and holding for review, we let them keep working while we process the changes.
@@ -374,7 +375,7 @@ Each stage is defined with these properties:
   run: string # Shell command to execute (required)
   shell: string # Shell to use: sh, bash, zsh (default: user's login shell via $SHELL -l)
   continue_on_error: bool # Continue if stage fails (default: false)
-  require_approval: bool # Pause for user approval (default: false)
+  require_approval: bool|string # Pause for user approval: true, false, or if_patches (default: false)
 ```
 
 **Stage Contract:**
@@ -521,7 +522,7 @@ run: | # Command to execute (inline script)
 # Optional (same as inline steps)
 shell: bash # Shell to use: sh, bash, zsh (default: user's login shell via $SHELL -l)
 continue-on-error: false # Continue pipeline if step fails
-require-approval: false # Pause pipeline for user approval
+require-approval: false # Pause pipeline for user approval (true | false | if_patches)
 
 # Optional metadata
 description: Generate PR description via AI agent
@@ -555,7 +556,7 @@ This uses the agent adapter configured in `~/.airlock/config.yml` or `.airlock/c
 
 ### 5.10 Default Workflow
 
-The `airlock init` command creates a `.airlock/workflows/main.yml` file with this default workflow:
+The `airlock init` command creates or overwrites `.airlock/workflows/main.yml` with this default workflow:
 
 ```yaml
 name: Main Pipeline
