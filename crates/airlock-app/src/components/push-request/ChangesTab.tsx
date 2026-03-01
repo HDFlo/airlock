@@ -12,16 +12,10 @@ import {
   GitCommitHorizontal,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getCommentKey, type CodeComment } from '@/lib/artifact-keys';
 import { parsePatchFiles, type FileDiffMetadata, type ChangeTypes, type DiffLineAnnotation } from '@pierre/diffs';
 import { FileDiff } from '@pierre/diffs/react';
 import { CritiqueComment, ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@airlock-hq/design-system/react';
-
-interface CodeComment {
-  file: string;
-  line: number;
-  message: string;
-  severity: 'info' | 'warning' | 'error';
-}
 
 interface ChangesTabProps {
   runId: string;
@@ -367,10 +361,6 @@ function FileItem({ file, isSelected, comments, stats, indent, onClick }: FileIt
 // =============================================================================
 // Helper components
 // =============================================================================
-
-function getCommentKey(c: CodeComment): string {
-  return `${c.file}:${c.line}:${c.severity}:${c.message.slice(0, 50)}`;
-}
 
 function CommentAnnotation({
   comment,

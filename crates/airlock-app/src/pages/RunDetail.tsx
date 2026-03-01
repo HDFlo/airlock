@@ -13,6 +13,7 @@ import {
   applyPatches,
 } from '@/hooks/use-daemon';
 import type { PatchArtifact } from '@/components/push-request/PatchesTab';
+import { getCommentKey, getPatchId, type CodeComment } from '@/lib/artifact-keys';
 import {
   Loader2,
   RefreshCw,
@@ -66,17 +67,6 @@ function getStatusTextColor(status: string): string {
     default:
       return 'text-foreground-muted';
   }
-}
-
-interface CodeComment {
-  file: string;
-  line: number;
-  message: string;
-  severity: 'info' | 'warning' | 'error';
-}
-
-function getCommentKey(c: CodeComment): string {
-  return `${c.file}:${c.line}:${c.severity}:${c.message}`;
 }
 
 export function RunDetail() {
@@ -206,7 +196,7 @@ export function RunDetail() {
           const result = await readArtifact(file.path);
           if (!result.is_binary) {
             const parsed = JSON.parse(result.content);
-            const id = file.path.replace('.json', '');
+            const id = getPatchId(file.path);
             const applied = file.path.includes('/patches/applied/');
             loadedPatches.push({
               id,

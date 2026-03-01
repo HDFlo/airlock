@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
 import type { FeedEvent, ArtifactCategory } from './types';
+import { getCommentKey, getPatchId, type CodeComment } from '@/lib/artifact-keys';
 
 type ArtifactEvent = Extract<FeedEvent, { type: 'artifact' }>;
 
@@ -68,7 +69,7 @@ function PatchArtifactItem({
   onTogglePatch: (id: string) => void;
 }) {
   const isApplied = event.artifact.path.includes('/patches/applied/');
-  const patchId = event.artifact.name.replace('.json', '');
+  const patchId = getPatchId(event.artifact.path);
   const isSelected = selectedPatches.has(patchId);
   const [expanded, setExpanded] = useState(!isApplied);
   const { content, loading } = useArtifactLoader(event.artifact.path, true);
@@ -134,17 +135,6 @@ function PatchArtifactItem({
 // ---------------------------------------------------------------------------
 // Comment artifact — inline severity-colored cards
 // ---------------------------------------------------------------------------
-
-interface CodeComment {
-  file: string;
-  line: number;
-  message: string;
-  severity: 'info' | 'warning' | 'error';
-}
-
-function getCommentKey(c: CodeComment): string {
-  return `${c.file}:${c.line}:${c.severity}:${c.message.slice(0, 50)}`;
-}
 
 function CommentArtifactItem({
   event,
