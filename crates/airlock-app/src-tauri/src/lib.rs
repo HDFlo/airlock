@@ -401,6 +401,7 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(
@@ -484,6 +485,12 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
+                // Save window state before hiding (plugin normally saves on close,
+                // but we prevent close for system tray behavior)
+                use tauri_plugin_window_state::AppHandleExt;
+                let _ = window
+                    .app_handle()
+                    .save_window_state(tauri_plugin_window_state::StateFlags::all());
                 api.prevent_close();
                 let _ = window.hide();
             }
