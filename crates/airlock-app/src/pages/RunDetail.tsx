@@ -10,7 +10,9 @@ import {
   reprocessRun,
   approveStep,
   readArtifact,
+  applyPatches,
 } from '@/hooks/use-daemon';
+import type { PatchArtifact } from '@/components/push-request/PatchesTab';
 import {
   Loader2,
   RefreshCw,
@@ -21,6 +23,7 @@ import {
   Activity,
   CheckCircle2,
   BookOpen,
+  Copy,
 } from 'lucide-react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useState, useCallback, useMemo, useEffect } from 'react';
@@ -65,6 +68,17 @@ function getStatusTextColor(status: string): string {
   }
 }
 
+interface CodeComment {
+  file: string;
+  line: number;
+  message: string;
+  severity: 'info' | 'warning' | 'error';
+}
+
+function getCommentKey(c: CodeComment): string {
+  return `${c.file}:${c.line}:${c.severity}:${c.message.slice(0, 50)}`;
+}
+
 export function RunDetail() {
   const { repoId, runId } = useParams<{ repoId: string; runId: string }>();
   const { detail, loading, error, refresh } = useRunDetail(runId ?? null);
@@ -75,6 +89,12 @@ export function RunDetail() {
   }, [repos, repoId]);
   const [reprocessing, setReprocessing] = useState(false);
   const [approvingStep, setApprovingStep] = useState<StepSelection | null>(null);
+  const [allComments, setAllComments] = useState<CodeComment[]>([]);
+  const [selectedComments, setSelectedComments] = useState<Set<string>>(new Set());
+  const [allPatches, setAllPatches] = useState<PatchArtifact[]>([]);
+  const [selectedPatches, setSelectedPatches] = useState<Set<string>>(new Set());
+  const [artifactDataLoading, setArtifactDataLoading] = useState(false);
+  const [applyingAndApproving, setApplyingAndApproving] = useState(false);
 
   const handleReprocess = async () => {
     if (!runId) return;
@@ -125,14 +145,6 @@ export function RunDetail() {
     }
   };
 
-  // Count pending patches for tab badge
-  const pendingPatchCount = useMemo(() => {
-    if (!detail?.artifacts) return 0;
-    return detail.artifacts.filter(
-      (a) => a.path.includes('/patches/') && !a.path.includes('/patches/applied/') && a.path.endsWith('.json')
-    ).length;
-  }, [detail?.artifacts]);
-
   // Count content files for tab badge
   const contentCount = useMemo(() => {
     if (!detail?.artifacts) return 0;
@@ -141,7 +153,7 @@ export function RunDetail() {
     ).length;
   }, [detail?.artifacts]);
 
-  // Count individual comments (not files) for Critique tab badge
+  // Artifact file lists for loading
   const commentFiles = useMemo(
     () =>
       (detail?.artifacts ?? []).filter(
@@ -149,35 +161,144 @@ export function RunDetail() {
       ),
     [detail?.artifacts]
   );
-  const [commentCount, setCommentCount] = useState(0);
+  const patchFiles = useMemo(
+    () =>
+      (detail?.artifacts ?? []).filter(
+        (a) => a.artifact_type === 'file' && a.path.includes('/patches/') && a.path.endsWith('.json')
+      ),
+    [detail?.artifacts]
+  );
+
+  // Load comments and patches from artifact files
   useEffect(() => {
     let cancelled = false;
-    async function countComments() {
-      let total = 0;
+
+    if (commentFiles.length === 0 && patchFiles.length === 0) {
+      setAllComments([]);
+      setSelectedComments(new Set());
+      setAllPatches([]);
+      setSelectedPatches(new Set());
+      setArtifactDataLoading(false);
+      return;
+    }
+
+    setArtifactDataLoading(true);
+
+    async function loadArtifactData() {
+      const loadedComments: CodeComment[] = [];
       for (const file of commentFiles) {
         try {
           const result = await readArtifact(file.path);
           if (!result.is_binary) {
             const parsed = JSON.parse(result.content);
             if (Array.isArray(parsed.comments)) {
-              total += parsed.comments.length;
+              loadedComments.push(...parsed.comments);
             }
           }
         } catch {
           // skip unreadable files
         }
       }
-      if (!cancelled) setCommentCount(total);
+
+      const loadedPatches: PatchArtifact[] = [];
+      for (const file of patchFiles) {
+        try {
+          const result = await readArtifact(file.path);
+          if (!result.is_binary) {
+            const parsed = JSON.parse(result.content);
+            const id = file.name.replace('.json', '');
+            const applied = file.path.includes('/patches/applied/');
+            loadedPatches.push({
+              id,
+              title: parsed.title || 'Untitled Patch',
+              explanation: parsed.explanation || '',
+              diff: parsed.diff || '',
+              applied,
+              artifactPath: file.path,
+            });
+          }
+        } catch {
+          // skip unreadable files
+        }
+      }
+
+      if (!cancelled) {
+        setAllComments(loadedComments);
+        setSelectedComments(new Set(loadedComments.filter((c) => c.severity === 'error').map(getCommentKey)));
+        setAllPatches(loadedPatches);
+        setSelectedPatches(new Set(loadedPatches.filter((p) => !p.applied).map((p) => p.id)));
+        setArtifactDataLoading(false);
+      }
     }
-    if (commentFiles.length > 0) {
-      countComments();
-    } else {
-      setCommentCount(0);
-    }
+
+    loadArtifactData();
     return () => {
       cancelled = true;
     };
-  }, [commentFiles]);
+  }, [commentFiles, patchFiles]);
+
+  // Derived counts
+  const commentCount = allComments.length;
+  const pendingPatchCount = useMemo(() => allPatches.filter((p) => !p.applied).length, [allPatches]);
+  const selectedPendingPatchCount = useMemo(
+    () => allPatches.filter((p) => !p.applied && selectedPatches.has(p.id)).length,
+    [allPatches, selectedPatches]
+  );
+
+  // Comment toggle handler
+  const handleToggleComment = useCallback((key: string) => {
+    setSelectedComments((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Patch selection handlers
+  const handleTogglePatch = useCallback((id: string) => {
+    setSelectedPatches((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAllPatches = useCallback(() => {
+    setSelectedPatches(new Set(allPatches.filter((p) => !p.applied).map((p) => p.id)));
+  }, [allPatches]);
+
+  const handleSelectNonePatches = useCallback(() => {
+    setSelectedPatches(new Set());
+  }, []);
+
+  // Copy selected comments to clipboard as markdown
+  const handleCopyComments = useCallback(async () => {
+    const selected = allComments.filter((c) => selectedComments.has(getCommentKey(c)));
+    const markdown = selected.map((c) => `- **[${c.severity}]** \`${c.file}:${c.line}\` — ${c.message}`).join('\n');
+    await navigator.clipboard.writeText(markdown);
+  }, [allComments, selectedComments]);
+
+  // Apply selected patches then approve
+  const handleApplyAndApprove = useCallback(async () => {
+    const awaitingStep = detail?.step_results.find((s) => s.status === 'awaiting_approval');
+    if (!awaitingStep || !runId) return;
+    try {
+      setApplyingAndApproving(true);
+      const paths = allPatches.filter((p) => selectedPatches.has(p.id)).map((p) => p.artifactPath);
+      if (paths.length > 0) {
+        await applyPatches(runId, paths);
+      }
+      const jobKey = awaitingStep.job_key || 'default';
+      await approveStep(runId, jobKey, awaitingStep.step);
+      await refresh();
+    } catch (e) {
+      console.error('Apply & approve failed:', e);
+    } finally {
+      setApplyingAndApproving(false);
+    }
+  }, [detail?.step_results, runId, allPatches, selectedPatches, refresh]);
 
   // Store active tab in URL search params so it survives refreshes and is shareable
   const [searchParams, setSearchParams] = useSearchParams();
@@ -229,28 +350,6 @@ export function RunDetail() {
         </div>
 
         <div className="flex items-center gap-2">
-          {detail?.run.status === 'awaiting_approval' &&
-            (() => {
-              const awaitingStep = detail.step_results.find((s) => s.status === 'awaiting_approval');
-              if (!awaitingStep) return null;
-              const jobKey = awaitingStep.job_key || 'default';
-              const isApproving = approvingStep?.jobKey === jobKey && approvingStep?.stepName === awaitingStep.step;
-              return (
-                <Button
-                  variant="signal"
-                  size="sm"
-                  onClick={() => handleApproveStep(jobKey, awaitingStep.step)}
-                  disabled={isApproving}
-                >
-                  {isApproving ? (
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-                  )}
-                  Approve
-                </Button>
-              );
-            })()}
           {detail?.run.status !== 'running' && (
             <Button
               variant="ghost"
@@ -344,7 +443,13 @@ export function RunDetail() {
             </TabsList>
 
             <TabsContent value="overview" className="mt-0 min-h-0 flex-1">
-              <OverviewTab artifacts={detail.artifacts} runId={runId!} onPatchApplied={refresh} />
+              <OverviewTab
+                artifacts={detail.artifacts}
+                selectedComments={selectedComments}
+                onToggleComment={handleToggleComment}
+                selectedPatches={selectedPatches}
+                onTogglePatch={handleTogglePatch}
+              />
             </TabsContent>
 
             <TabsContent value="activity" className="mt-0 min-h-0 flex-1">
@@ -364,11 +469,25 @@ export function RunDetail() {
             </TabsContent>
 
             <TabsContent value="changes" className="mt-0 min-h-0 flex-1">
-              <ChangesTab runId={runId!} artifacts={detail.artifacts} />
+              <ChangesTab
+                runId={runId!}
+                artifacts={detail.artifacts}
+                selectedComments={selectedComments}
+                onToggleComment={handleToggleComment}
+              />
             </TabsContent>
 
             <TabsContent value="patches" className="mt-0 min-h-0 flex-1">
-              <PatchesTab artifacts={detail.artifacts} runId={runId!} onPatchesApplied={refresh} />
+              <PatchesTab
+                patches={allPatches}
+                patchesLoading={artifactDataLoading}
+                selectedPatches={selectedPatches}
+                onTogglePatch={handleTogglePatch}
+                onSelectAllPatches={handleSelectAllPatches}
+                onSelectNonePatches={handleSelectNonePatches}
+                runId={runId!}
+                onPatchesApplied={refresh}
+              />
             </TabsContent>
           </Tabs>
         ) : (
@@ -377,6 +496,73 @@ export function RunDetail() {
           </div>
         )}
       </div>
+
+      {/* Bottom action bar */}
+      {detail?.run.status === 'awaiting_approval' && (
+        <div className="border-border-subtle bg-background flex items-center justify-between rounded-lg border px-4 py-3">
+          <button
+            className="text-small text-foreground-muted hover:text-foreground cursor-pointer"
+            onClick={() => {
+              if (selectedComments.size === allComments.length) {
+                setSelectedComments(new Set());
+              } else {
+                setSelectedComments(new Set(allComments.map(getCommentKey)));
+              }
+            }}
+          >
+            {selectedComments.size}/{allComments.length} {allComments.length === 1 ? 'comment' : 'comments'},{' '}
+            {selectedPendingPatchCount}/{pendingPatchCount} {pendingPatchCount === 1 ? 'patch' : 'patches'} selected
+          </button>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="signal-outline"
+              size="sm"
+              disabled={selectedComments.size === 0}
+              onClick={handleCopyComments}
+            >
+              <Copy className="mr-1.5 h-3.5 w-3.5" />
+              Copy {selectedComments.size} {selectedComments.size === 1 ? 'comment' : 'comments'}
+            </Button>
+
+            {selectedPendingPatchCount > 0 && (
+              <Button
+                variant="signal-outline"
+                size="sm"
+                disabled={applyingAndApproving}
+                onClick={handleApplyAndApprove}
+              >
+                {applyingAndApproving ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Layers className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                Apply {selectedPendingPatchCount} {selectedPendingPatchCount === 1 ? 'patch' : 'patches'} & approve
+              </Button>
+            )}
+
+            <Button
+              variant="signal"
+              size="sm"
+              disabled={approvingStep !== null || applyingAndApproving}
+              onClick={() => {
+                const awaitingStep = detail?.step_results.find((s) => s.status === 'awaiting_approval');
+                if (awaitingStep) {
+                  const jobKey = awaitingStep.job_key || 'default';
+                  handleApproveStep(jobKey, awaitingStep.step);
+                }
+              }}
+            >
+              {approvingStep !== null ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Approve
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

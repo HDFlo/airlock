@@ -3,14 +3,28 @@ import { ActivityFeed } from './activity-feed';
 
 interface OverviewTabProps {
   artifacts: ArtifactInfo[];
-  runId: string;
-  onPatchApplied?: () => void;
+  selectedComments: Set<string>;
+  onToggleComment: (key: string) => void;
+  selectedPatches: Set<string>;
+  onTogglePatch: (id: string) => void;
 }
 
-export function OverviewTab({ artifacts, runId, onPatchApplied }: OverviewTabProps) {
+export function OverviewTab({
+  artifacts,
+  selectedComments,
+  onToggleComment,
+  selectedPatches,
+  onTogglePatch,
+}: OverviewTabProps) {
   return (
     <div className="h-full overflow-y-auto">
-      <ActivityFeed artifacts={artifacts} runId={runId} onPatchApplied={onPatchApplied} />
+      <ActivityFeed
+        artifacts={artifacts}
+        selectedComments={selectedComments}
+        onToggleComment={onToggleComment}
+        selectedPatches={selectedPatches}
+        onTogglePatch={onTogglePatch}
+      />
     </div>
   );
 }

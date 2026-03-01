@@ -17,7 +17,7 @@ const buttonVariants = cva(
         destructive: 'bg-danger text-background hover:opacity-90',
         outline: 'border border-border-subtle bg-background hover:bg-surface hover:text-foreground',
         secondary: 'bg-surface-elevated text-foreground hover:bg-surface',
-        ghost: 'hover:bg-surface-elevated hover:text-foreground',
+        ghost: 'ring-inset hover:ring-1 hover:ring-border-subtle hover:bg-surface-elevated hover:text-foreground',
         link: 'text-signal underline-offset-4 hover:underline',
       },
       size: {

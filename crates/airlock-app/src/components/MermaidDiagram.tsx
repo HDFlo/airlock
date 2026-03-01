@@ -179,13 +179,7 @@ function DiagramViewer({ svgContent }: { svgContent: string }) {
 
   return (
     <div className="border-border-subtle group relative my-4 overflow-hidden rounded-lg border">
-      <TransformWrapper
-        initialScale={fitScale}
-        minScale={0.1}
-        maxScale={4}
-        centerOnInit
-        wheel={{ disabled: true }}
-      >
+      <TransformWrapper initialScale={fitScale} minScale={0.1} maxScale={4} centerOnInit wheel={{ disabled: true }}>
         <Controls />
         <TransformComponent
           wrapperStyle={{ width: '100%', height: `${MAX_HEIGHT}px` }}

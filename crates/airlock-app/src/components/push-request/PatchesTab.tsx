@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
-import { readArtifact, applyPatches, type ArtifactInfo } from '@/hooks/use-daemon';
+import { useState, useMemo } from 'react';
+import { applyPatches } from '@/hooks/use-daemon';
 import { Loader2, FileCode, Check, ChevronDown, ChevronRight, CheckCircle2, Layers, AlertCircle } from 'lucide-react';
 import { Button, ExpandableCard } from '@airlock-hq/design-system/react';
 import { cn } from '@/lib/utils';
 
-interface PatchArtifact {
+export interface PatchArtifact {
   id: string;
   title: string;
   explanation: string;
@@ -15,7 +15,12 @@ interface PatchArtifact {
 }
 
 interface PatchesTabProps {
-  artifacts: ArtifactInfo[];
+  patches: PatchArtifact[];
+  patchesLoading: boolean;
+  selectedPatches: Set<string>;
+  onTogglePatch: (id: string) => void;
+  onSelectAllPatches: () => void;
+  onSelectNonePatches: () => void;
   runId: string;
   onPatchesApplied?: () => void;
 }
@@ -25,73 +30,22 @@ interface PatchesTabProps {
  * Users can review, select, and apply patches.
  * Patches committed during freeze are shown as "applied"; later patches are "pending".
  */
-export function PatchesTab({ artifacts, runId, onPatchesApplied }: PatchesTabProps) {
-  const [patches, setPatches] = useState<PatchArtifact[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedPatches, setSelectedPatches] = useState<Set<string>>(new Set());
+export function PatchesTab({
+  patches,
+  patchesLoading,
+  selectedPatches,
+  onTogglePatch,
+  onSelectAllPatches,
+  onSelectNonePatches,
+  runId,
+  onPatchesApplied,
+}: PatchesTabProps) {
   const [expandedPatches, setExpandedPatches] = useState<Set<string>>(new Set());
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
 
-  // Filter for patch artifacts (both pending and applied)
-  const patchFiles = useMemo(
-    () =>
-      artifacts.filter((a) => a.artifact_type === 'file' && a.path.includes('/patches/') && a.path.endsWith('.json')),
-    [artifacts]
-  );
-
-  useEffect(() => {
-    async function loadPatches() {
-      if (patchFiles.length === 0) {
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-      const loaded: PatchArtifact[] = [];
-
-      for (const file of patchFiles) {
-        try {
-          const result = await readArtifact(file.path);
-          if (!result.is_binary) {
-            const parsed = JSON.parse(result.content);
-            const id = file.name.replace('.json', '');
-            const applied = file.path.includes('/patches/applied/');
-            loaded.push({
-              id,
-              title: parsed.title || 'Untitled Patch',
-              explanation: parsed.explanation || '',
-              diff: parsed.diff || '',
-              applied,
-              artifactPath: file.path,
-            });
-          }
-        } catch (e) {
-          console.error('Failed to load patch:', file.path, e);
-        }
-      }
-
-      setPatches(loaded);
-      // Auto-select only pending patches
-      setSelectedPatches(new Set(loaded.filter((p) => !p.applied).map((p) => p.id)));
-      setLoading(false);
-    }
-
-    loadPatches();
-  }, [patchFiles]);
-
   const appliedPatches = useMemo(() => patches.filter((p) => p.applied), [patches]);
   const pendingPatches = useMemo(() => patches.filter((p) => !p.applied), [patches]);
-
-  const togglePatchSelection = (id: string) => {
-    const newSelected = new Set(selectedPatches);
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-    } else {
-      newSelected.add(id);
-    }
-    setSelectedPatches(newSelected);
-  };
 
   const togglePatchExpanded = (id: string) => {
     const newExpanded = new Set(expandedPatches);
@@ -103,15 +57,7 @@ export function PatchesTab({ artifacts, runId, onPatchesApplied }: PatchesTabPro
     setExpandedPatches(newExpanded);
   };
 
-  const selectAll = () => {
-    setSelectedPatches(new Set(pendingPatches.map((p) => p.id)));
-  };
-
-  const selectNone = () => {
-    setSelectedPatches(new Set());
-  };
-
-  if (loading) {
+  if (patchesLoading) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="text-foreground-muted h-6 w-6 animate-spin" />
@@ -144,10 +90,20 @@ export function PatchesTab({ artifacts, runId, onPatchesApplied }: PatchesTabPro
         </div>
         {pendingPatches.length > 0 && (
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="border-border-subtle text-micro" onClick={selectAll}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-border-subtle text-micro"
+              onClick={onSelectAllPatches}
+            >
               Select All
             </Button>
-            <Button variant="outline" size="sm" className="border-border-subtle text-micro" onClick={selectNone}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-border-subtle text-micro"
+              onClick={onSelectNonePatches}
+            >
               Select None
             </Button>
             <Button
@@ -231,7 +187,7 @@ export function PatchesTab({ artifacts, runId, onPatchesApplied }: PatchesTabPro
                   onToggleExpand={() => togglePatchExpanded(patch.id)}
                   variant="pending"
                   isSelected={selectedPatches.has(patch.id)}
-                  onToggleSelect={() => togglePatchSelection(patch.id)}
+                  onToggleSelect={() => onTogglePatch(patch.id)}
                 />
               ))}
             </>

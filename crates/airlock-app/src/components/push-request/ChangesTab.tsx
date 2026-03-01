@@ -14,7 +14,7 @@ import {
 import { cn } from '@/lib/utils';
 import { parsePatchFiles, type FileDiffMetadata, type ChangeTypes, type DiffLineAnnotation } from '@pierre/diffs';
 import { FileDiff } from '@pierre/diffs/react';
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@airlock-hq/design-system/react';
+import { CritiqueComment, ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@airlock-hq/design-system/react';
 
 interface CodeComment {
   file: string;
@@ -26,13 +26,15 @@ interface CodeComment {
 interface ChangesTabProps {
   runId: string;
   artifacts: ArtifactInfo[];
+  selectedComments: Set<string>;
+  onToggleComment: (key: string) => void;
 }
 
 /**
  * ChangesTab displays file-by-file diffs with inline comments.
  * For multi-commit pushes, files are grouped by commit in the sidebar.
  */
-export function ChangesTab({ runId, artifacts }: ChangesTabProps) {
+export function ChangesTab({ runId, artifacts, selectedComments, onToggleComment }: ChangesTabProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [patch, setPatch] = useState<string>('');
@@ -304,7 +306,13 @@ export function ChangesTab({ runId, artifacts }: ChangesTabProps) {
                 disableFileHeader: true,
               }}
               lineAnnotations={lineAnnotations}
-              renderAnnotation={(annotation) => <CommentAnnotation comment={annotation.metadata} />}
+              renderAnnotation={(annotation) => (
+                <CommentAnnotation
+                  comment={annotation.metadata}
+                  selectedComments={selectedComments}
+                  onToggleComment={onToggleComment}
+                />
+              )}
             />
           ) : (
             <div className="flex h-full items-center justify-center">
@@ -360,26 +368,28 @@ function FileItem({ file, isSelected, comments, stats, indent, onClick }: FileIt
 // Helper components
 // =============================================================================
 
-interface CommentAnnotationProps {
-  comment: CodeComment;
+function getCommentKey(c: CodeComment): string {
+  return `${c.file}:${c.line}:${c.severity}:${c.message.slice(0, 50)}`;
 }
 
-function CommentAnnotation({ comment }: CommentAnnotationProps) {
+function CommentAnnotation({
+  comment,
+  selectedComments,
+  onToggleComment,
+}: {
+  comment: CodeComment;
+  selectedComments: Set<string>;
+  onToggleComment: (key: string) => void;
+}) {
+  const key = getCommentKey(comment);
   return (
-    <div
-      className={cn(
-        'text-small my-1 rounded border-l-2 px-3 py-2 break-words whitespace-normal',
-        comment.severity === 'error' && 'border-danger bg-danger/10',
-        comment.severity === 'warning' && 'border-warning bg-warning/10',
-        comment.severity === 'info' && 'border-signal bg-signal/10'
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <MessageSquare className="h-3 w-3" />
-        <span className="font-semibold capitalize">{comment.severity}</span>
-      </div>
-      <p className="mt-1">{comment.message}</p>
-    </div>
+    <CritiqueComment
+      severity={comment.severity}
+      message={comment.message}
+      selected={selectedComments.has(key)}
+      onToggle={() => onToggleComment(key)}
+      className="my-1 break-words whitespace-normal"
+    />
   );
 }
 

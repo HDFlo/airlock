@@ -3,6 +3,7 @@ export * from './atmosphere';
 export * from './badge';
 export * from './button';
 export * from './card';
+export * from './critique-comment';
 export * from './dialog';
 export * from './expandable-card';
 export * from './input';

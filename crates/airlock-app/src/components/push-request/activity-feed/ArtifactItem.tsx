@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { FileCode, FileText, MessageSquare, ChevronDown, ChevronUp, Loader2, CheckCircle2 } from 'lucide-react';
-import { Button, ExpandableCard } from '@airlock-hq/design-system/react';
+import { FileCode, FileText, MessageSquare, ChevronDown, ChevronUp, Loader2, CheckCircle2, Check } from 'lucide-react';
+import { CritiqueComment, ExpandableCard } from '@airlock-hq/design-system/react';
 import { cn } from '@/lib/utils';
 import { useArtifactLoader } from '@/components/StageLogViewer/hooks';
-import { applyPatches } from '@/hooks/use-daemon';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
@@ -13,8 +12,10 @@ type ArtifactEvent = Extract<FeedEvent, { type: 'artifact' }>;
 
 interface ArtifactItemProps {
   event: ArtifactEvent;
-  runId: string;
-  onPatchApplied?: () => void;
+  selectedComments: Set<string>;
+  onToggleComment: (key: string) => void;
+  selectedPatches: Set<string>;
+  onTogglePatch: (id: string) => void;
 }
 
 function getCategoryIcon(category: ArtifactCategory) {
@@ -32,14 +33,22 @@ function getTitle(artifact: ArtifactEvent['artifact']): string {
   return artifact.name.replace(/\.(json|md)$/, '').replace(/[-_]/g, ' ');
 }
 
-export function ArtifactItem({ event, runId, onPatchApplied }: ArtifactItemProps) {
+export function ArtifactItem({
+  event,
+  selectedComments,
+  onToggleComment,
+  selectedPatches,
+  onTogglePatch,
+}: ArtifactItemProps) {
   const { category } = event;
 
   switch (category) {
     case 'patch':
-      return <PatchArtifactItem event={event} runId={runId} onPatchApplied={onPatchApplied} />;
+      return <PatchArtifactItem event={event} selectedPatches={selectedPatches} onTogglePatch={onTogglePatch} />;
     case 'comment':
-      return <CommentArtifactItem event={event} />;
+      return (
+        <CommentArtifactItem event={event} selectedComments={selectedComments} onToggleComment={onToggleComment} />
+      );
     case 'content':
       return <ContentArtifactItem event={event} />;
   }
@@ -51,36 +60,22 @@ export function ArtifactItem({ event, runId, onPatchApplied }: ArtifactItemProps
 
 function PatchArtifactItem({
   event,
-  runId,
-  onPatchApplied,
+  selectedPatches,
+  onTogglePatch,
 }: {
   event: ArtifactEvent;
-  runId: string;
-  onPatchApplied?: () => void;
+  selectedPatches: Set<string>;
+  onTogglePatch: (id: string) => void;
 }) {
   const isApplied = event.artifact.path.includes('/patches/applied/');
+  const patchId = event.artifact.name.replace('.json', '');
+  const isSelected = selectedPatches.has(patchId);
   const [expanded, setExpanded] = useState(!isApplied);
-  const [applying, setApplying] = useState(false);
   const { content, loading } = useArtifactLoader(event.artifact.path, true);
   const parsed = content ? safeParse<{ title?: string; explanation?: string; diff?: string }>(content) : null;
   const title = parsed?.title || getTitle(event.artifact);
   const explanation = parsed?.explanation;
   const diff = parsed?.diff ?? '';
-
-  const handleApply = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setApplying(true);
-    try {
-      const result = await applyPatches(runId, [event.artifact.path]);
-      if (result.success) {
-        onPatchApplied?.();
-      }
-    } catch {
-      // error is non-critical here; PatchesTab has full error handling
-    } finally {
-      setApplying(false);
-    }
-  };
 
   return (
     <div>
@@ -88,10 +83,21 @@ function PatchArtifactItem({
         className="hover:bg-surface/40 flex cursor-pointer items-center gap-3 px-4 py-2"
         onClick={() => setExpanded(!expanded)}
       >
-        {expanded ? (
-          <ChevronUp className="text-foreground-muted h-3.5 w-3.5 shrink-0" />
+        {isApplied ? (
+          <CheckCircle2 className="text-success h-4 w-4 shrink-0" />
         ) : (
-          <ChevronDown className="text-foreground-muted h-3.5 w-3.5 shrink-0" />
+          <div
+            className={cn(
+              'flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded border',
+              isSelected ? 'border-signal bg-signal text-background' : 'border-foreground-muted'
+            )}
+            onClick={(e) => {
+              e.stopPropagation();
+              onTogglePatch(patchId);
+            }}
+          >
+            {isSelected && <Check className="h-2.5 w-2.5" />}
+          </div>
         )}
         {getCategoryIcon('patch')}
         <span className="text-small min-w-0 flex-1 truncate py-1">{title}</span>
@@ -99,22 +105,10 @@ function PatchArtifactItem({
           <span className="text-small text-foreground-muted hidden truncate sm:inline">{explanation}</span>
         )}
         {diff && <PatchStats diff={diff} />}
-        {isApplied ? (
-          <span className="text-success text-micro flex shrink-0 items-center gap-1">
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            Applied
-          </span>
+        {expanded ? (
+          <ChevronUp className="text-foreground-muted h-3.5 w-3.5 shrink-0" />
         ) : (
-          <Button
-            variant="signal-outline"
-            size="sm"
-            className="text-micro shrink-0"
-            disabled={applying}
-            onClick={handleApply}
-          >
-            {applying ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
-            {applying ? 'Applying...' : 'Apply'}
-          </Button>
+          <ChevronDown className="text-foreground-muted h-3.5 w-3.5 shrink-0" />
         )}
       </div>
 
@@ -148,12 +142,39 @@ interface CodeComment {
   severity: 'info' | 'warning' | 'error';
 }
 
-function CommentArtifactItem({ event }: { event: ArtifactEvent }) {
+function getCommentKey(c: CodeComment): string {
+  return `${c.file}:${c.line}:${c.severity}:${c.message.slice(0, 50)}`;
+}
+
+function CommentArtifactItem({
+  event,
+  selectedComments,
+  onToggleComment,
+}: {
+  event: ArtifactEvent;
+  selectedComments: Set<string>;
+  onToggleComment: (key: string) => void;
+}) {
   const [expanded, setExpanded] = useState(true);
   const { content, loading } = useArtifactLoader(event.artifact.path, true);
 
   const parsed = content ? safeParse<{ comments?: CodeComment[] }>(content) : null;
   const comments = parsed?.comments ?? [];
+
+  const commentKeys = comments.map(getCommentKey);
+  const selectedCount = commentKeys.filter((k) => selectedComments.has(k)).length;
+  const allSelected = comments.length > 0 && selectedCount === comments.length;
+
+  const handleToggleAll = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (allSelected) {
+      for (const key of commentKeys) onToggleComment(key);
+    } else {
+      for (const key of commentKeys) {
+        if (!selectedComments.has(key)) onToggleComment(key);
+      }
+    }
+  };
 
   return (
     <div>
@@ -161,40 +182,52 @@ function CommentArtifactItem({ event }: { event: ArtifactEvent }) {
         className="hover:bg-surface/40 flex cursor-pointer items-center gap-3 px-4 py-2"
         onClick={() => setExpanded(!expanded)}
       >
-        {expanded ? (
-          <ChevronUp className="text-foreground-muted h-3.5 w-3.5 shrink-0" />
+        {comments.length > 0 ? (
+          <div
+            className={cn(
+              'flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded border',
+              allSelected
+                ? 'border-signal bg-signal text-background'
+                : selectedCount > 0
+                  ? 'border-signal bg-signal/20'
+                  : 'border-foreground-muted'
+            )}
+            onClick={handleToggleAll}
+          >
+            {allSelected && <Check className="h-2.5 w-2.5" />}
+            {!allSelected && selectedCount > 0 && <div className="bg-signal h-1.5 w-1.5 rounded-sm" />}
+          </div>
         ) : (
-          <ChevronDown className="text-foreground-muted h-3.5 w-3.5 shrink-0" />
+          <CheckCircle2 className="text-success h-4 w-4 shrink-0" />
         )}
         {getCategoryIcon('comment')}
         <span className="text-small min-w-0 flex-1 truncate py-1">
           Critique comments
           {comments.length > 0 && <span className="text-foreground-muted ml-1">({comments.length})</span>}
         </span>
+        {expanded ? (
+          <ChevronUp className="text-foreground-muted h-3.5 w-3.5 shrink-0" />
+        ) : (
+          <ChevronDown className="text-foreground-muted h-3.5 w-3.5 shrink-0" />
+        )}
       </div>
 
       {expanded && !loading && comments.length > 0 && (
         <div className="mx-4 mb-4 space-y-2">
-          {comments.map((comment, i) => (
-            <div
-              key={i}
-              className={cn(
-                'text-small rounded border-l-2 px-3 py-2',
-                comment.severity === 'error' && 'border-danger bg-danger/10',
-                comment.severity === 'warning' && 'border-warning bg-warning/10',
-                comment.severity === 'info' && 'border-signal bg-signal/10'
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <MessageSquare className="h-3 w-3 shrink-0" />
-                <span className="font-semibold capitalize">{comment.severity}</span>
-                <span className="text-micro text-foreground-muted truncate font-mono">
-                  {comment.file}:{comment.line}
-                </span>
-              </div>
-              <p className="mt-1">{comment.message}</p>
-            </div>
-          ))}
+          {comments.map((comment, i) => {
+            const commentKey = getCommentKey(comment);
+            return (
+              <CritiqueComment
+                key={i}
+                severity={comment.severity}
+                message={comment.message}
+                file={comment.file}
+                line={comment.line}
+                selected={selectedComments.has(commentKey)}
+                onToggle={() => onToggleComment(commentKey)}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -225,13 +258,14 @@ function ContentArtifactItem({ event }: { event: ArtifactEvent }) {
         className="hover:bg-surface/40 flex cursor-pointer items-center gap-3 px-4 py-2"
         onClick={() => setExpanded(!expanded)}
       >
+        <CheckCircle2 className="text-success h-4 w-4 shrink-0" />
+        {getCategoryIcon('content')}
+        <span className="text-small min-w-0 flex-1 truncate py-1">{title}</span>
         {expanded ? (
           <ChevronUp className="text-foreground-muted h-3.5 w-3.5 shrink-0" />
         ) : (
           <ChevronDown className="text-foreground-muted h-3.5 w-3.5 shrink-0" />
         )}
-        {getCategoryIcon('content')}
-        <span className="text-small min-w-0 flex-1 truncate py-1">{title}</span>
       </div>
 
       {expanded && (
