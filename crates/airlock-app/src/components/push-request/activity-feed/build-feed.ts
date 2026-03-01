@@ -10,29 +10,31 @@ export function classifyArtifact(artifact: ArtifactInfo): ArtifactCategory {
 export function buildFeed(steps: StepResultInfo[], artifacts: ArtifactInfo[]): FeedEvent[] {
   const events: FeedEvent[] = [];
 
-  for (const step of steps) {
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
     if (step.status === 'pending') continue;
 
+    const stepKey = `${step.job_key || 'default'}-${step.step}-${i}`;
     if (step.status === 'running') {
       events.push({
         type: 'step-running',
         step,
         timestamp: step.started_at ?? 0,
-        key: `running-${step.step}`,
+        key: `running-${stepKey}`,
       });
     } else if (step.status === 'awaiting_approval') {
       events.push({
         type: 'step-awaiting',
         step,
         timestamp: step.started_at ?? 0,
-        key: `awaiting-${step.step}`,
+        key: `awaiting-${stepKey}`,
       });
     } else {
       events.push({
         type: 'step-completed',
         step,
         timestamp: step.started_at ?? 0,
-        key: `completed-${step.step}`,
+        key: `completed-${stepKey}`,
       });
     }
   }
@@ -47,7 +49,7 @@ export function buildFeed(steps: StepResultInfo[], artifacts: ArtifactInfo[]): F
       artifact,
       category,
       timestamp: artifact.created_at,
-      key: `artifact-${artifact.name}`,
+      key: `artifact-${artifact.path}`,
     });
   }
 

@@ -76,7 +76,7 @@ interface CodeComment {
 }
 
 function getCommentKey(c: CodeComment): string {
-  return `${c.file}:${c.line}:${c.severity}:${c.message.slice(0, 50)}`;
+  return `${c.file}:${c.line}:${c.severity}:${c.message}`;
 }
 
 export function RunDetail() {
@@ -206,7 +206,7 @@ export function RunDetail() {
           const result = await readArtifact(file.path);
           if (!result.is_binary) {
             const parsed = JSON.parse(result.content);
-            const id = file.name.replace('.json', '');
+            const id = file.path.replace('.json', '');
             const applied = file.path.includes('/patches/applied/');
             loadedPatches.push({
               id,

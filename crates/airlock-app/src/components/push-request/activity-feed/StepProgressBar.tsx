@@ -33,12 +33,12 @@ export function StepProgressBar({ steps, onStepClick }: StepProgressBarProps) {
   return (
     <div className="pt-3 pb-2">
       <div className="flex gap-1">
-        {steps.map((step) => {
+        {steps.map((step, i) => {
           const config = getStatusConfig(step.status);
           const isAnimated = step.status === 'running' || step.status === 'awaiting_approval';
           return (
             <button
-              key={`${step.job_key || 'default'}-${step.step}`}
+              key={`${step.job_key || 'default'}-${step.step}-${i}`}
               className={cn(
                 'h-2 min-w-0 flex-1 cursor-pointer rounded-full',
                 !isAnimated && 'hover:opacity-80',
