@@ -189,9 +189,7 @@ fn can_run_gui_apps() -> bool {
 fn is_app_already_running() -> bool {
     #[cfg(unix)]
     {
-        let output = Command::new("pgrep")
-            .args(["-f", "airlock-app"])
-            .output();
+        let output = Command::new("pgrep").args(["-f", "airlock-app"]).output();
         if let Ok(output) = output {
             return output.status.success();
         }

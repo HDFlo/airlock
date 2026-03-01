@@ -374,6 +374,7 @@ async fn resume_pipeline_after_approval(
         effective_base_sha: &run.base_sha,
         cancel: None,
         clear_approval_for_step: clear_approval,
+        step_offset: start_idx,
     };
 
     let (final_job_status, job_error) =
@@ -1835,6 +1836,95 @@ mod tests {
             bad_path.exists(),
             "Failed patch should remain in original location"
         );
+    }
+
+    /// When a job is stuck in Running (e.g., due to a panic before the fix),
+    /// emit_run_final_status should NOT emit RunCompleted — since not all jobs
+    /// are in a final state.
+    #[tokio::test]
+    async fn test_emit_run_final_status_with_stuck_running_job() {
+        let ctx = create_test_context();
+
+        {
+            let db = ctx.db.lock().await;
+            let repo = create_test_repo("repo1");
+            db.insert_repo(&repo).unwrap();
+            let run = create_test_run("run1", "repo1");
+            db.insert_run(&run).unwrap();
+
+            // One job passed, one stuck in Running (simulating a panicked task)
+            let mut job1 = create_test_job_result("job1", "run1", "lint");
+            job1.status = JobStatus::Passed;
+            db.insert_job_result(&job1).unwrap();
+
+            let mut job2 = create_test_job_result("job2", "run1", "test");
+            job2.status = JobStatus::Running;
+            job2.job_order = 1;
+            db.insert_job_result(&job2).unwrap();
+        }
+
+        let run = {
+            let db = ctx.db.lock().await;
+            db.get_run("run1").unwrap().unwrap()
+        };
+
+        let mut rx = ctx.subscribe();
+        emit_run_final_status(&ctx, &run).await;
+
+        // Should NOT emit any event — not all jobs are done and none are paused
+        assert!(
+            rx.try_recv().is_err(),
+            "No event should be emitted when a job is stuck in Running"
+        );
+    }
+
+    /// After marking a panicked job as Failed, emit_run_final_status should
+    /// correctly emit RunCompleted { success: false }.
+    #[tokio::test]
+    async fn test_emit_run_final_status_after_marking_panicked_job_failed() {
+        let ctx = create_test_context();
+
+        {
+            let db = ctx.db.lock().await;
+            let repo = create_test_repo("repo1");
+            db.insert_repo(&repo).unwrap();
+            let run = create_test_run("run1", "repo1");
+            db.insert_run(&run).unwrap();
+
+            let mut job1 = create_test_job_result("job1", "run1", "lint");
+            job1.status = JobStatus::Passed;
+            db.insert_job_result(&job1).unwrap();
+
+            // Simulate the fix: the panicked job was marked as Failed
+            let mut job2 = create_test_job_result("job2", "run1", "test");
+            job2.status = JobStatus::Failed;
+            job2.error = Some("Internal error: job task panicked".to_string());
+            job2.job_order = 1;
+            db.insert_job_result(&job2).unwrap();
+        }
+
+        let run = {
+            let db = ctx.db.lock().await;
+            db.get_run("run1").unwrap().unwrap()
+        };
+
+        let mut rx = ctx.subscribe();
+        emit_run_final_status(&ctx, &run).await;
+
+        let event = rx.try_recv().unwrap();
+        match event {
+            AirlockEvent::RunCompleted {
+                run_id,
+                success,
+                branch,
+                ..
+            } => {
+                assert_eq!(run_id, "run1");
+                assert!(!success, "Run should fail when a job panicked");
+                assert_eq!(branch, "refs/heads/feature/test");
+            }
+            other => panic!("Expected RunCompleted, got {:?}", other),
+        }
     }
 
     #[tokio::test]

@@ -356,6 +356,8 @@ async fn execute_workflow_dag(
                 wave_jobs.push((job_key.clone(), worktree_path));
             }
 
+            let spawned_keys: Vec<String> = wave_jobs.iter().map(|(k, _)| k.clone()).collect();
+
             for (job_key, worktree_path) in wave_jobs {
                 let ctx = ctx.clone();
                 let run = run.clone();
@@ -389,6 +391,24 @@ async fn execute_workflow_dag(
                     }
                     Err(e) => {
                         error!("Job task panicked: {}", e);
+                    }
+                }
+            }
+
+            // Mark any spawned jobs that didn't return a result (panicked) as Failed
+            for key in &spawned_keys {
+                if !job_statuses.contains_key(key) {
+                    error!("Job '{}' panicked — marking as failed", key);
+                    job_statuses.insert(key.clone(), JobStatus::Failed);
+                    if let Some(job_id) = job_id_map.get(key) {
+                        let db = ctx.db.lock().await;
+                        let _ = db.update_job_status(
+                            job_id,
+                            JobStatus::Failed,
+                            None,
+                            Some(now_epoch()),
+                            Some("Internal error: job task panicked"),
+                        );
                     }
                 }
             }
@@ -585,6 +605,10 @@ pub(super) struct StepSequenceParams<'a> {
     pub cancel: Option<&'a CancellationToken>,
     /// If set, clear the approval gate on this step name (pre-paused re-execution).
     pub clear_approval_for_step: Option<&'a str>,
+    /// The step_order offset for the first step in `steps`.
+    /// Used to match step results by `step_order` instead of name,
+    /// avoiding corruption when duplicate step names exist.
+    pub step_offset: usize,
 }
 
 /// Execute a sequence of steps, handling resolve/env/execute/emit for each.
@@ -601,7 +625,7 @@ pub(super) async fn execute_step_sequence(
     let mut job_error: Option<String> = None;
     let mut paused_for_approval = false;
 
-    for step in steps {
+    for (i, step) in steps.iter().enumerate() {
         // Check cancellation before each step
         if let Some(cancel) = params.cancel {
             if cancel.is_cancelled() {
@@ -615,13 +639,18 @@ pub(super) async fn execute_step_sequence(
             }
         }
 
-        // Find the matching step result by name
-        let step_result = match step_results.iter_mut().find(|r| r.name == step.name) {
+        // Find the matching step result by step_order (not name) to handle
+        // duplicate step names correctly.
+        let expected_order = (params.step_offset + i) as i32;
+        let step_result = match step_results
+            .iter_mut()
+            .find(|r| r.step_order == expected_order)
+        {
             Some(r) => r,
             None => {
                 error!(
-                    "Step result for '{}' not found in job '{}'",
-                    step.name, params.job_key
+                    "Step result with step_order={} not found in job '{}' (step '{}')",
+                    expected_order, params.job_key, step.name
                 );
                 job_success = false;
                 break;
@@ -948,6 +977,7 @@ pub(super) async fn execute_single_job(
         effective_base_sha: &effective_base_sha,
         cancel: Some(cancel),
         clear_approval_for_step: None,
+        step_offset: 0,
     };
 
     let (final_status, job_error) =
@@ -1125,6 +1155,7 @@ pub(super) async fn resume_dag_after_job_completion(
         } else {
             // Multiple jobs — execute in parallel
             let mut join_set = tokio::task::JoinSet::new();
+            let spawned_keys: Vec<String> = newly_runnable.clone();
 
             for job_key in &newly_runnable {
                 let job_config = workflow.jobs.get(job_key).unwrap();
@@ -1163,6 +1194,27 @@ pub(super) async fn resume_dag_after_job_completion(
                     }
                     Err(e) => {
                         error!("Job task panicked during DAG resume: {}", e);
+                    }
+                }
+            }
+
+            // Mark any spawned jobs that didn't return a result (panicked) as Failed
+            for key in &spawned_keys {
+                if !job_statuses.contains_key(key) {
+                    error!(
+                        "Job '{}' panicked during DAG resume — marking as failed",
+                        key
+                    );
+                    job_statuses.insert(key.clone(), JobStatus::Failed);
+                    if let Some(job_id) = job_id_map.get(key) {
+                        let db = ctx.db.lock().await;
+                        let _ = db.update_job_status(
+                            job_id,
+                            JobStatus::Failed,
+                            None,
+                            Some(now_epoch()),
+                            Some("Internal error: job task panicked"),
+                        );
                     }
                 }
             }
