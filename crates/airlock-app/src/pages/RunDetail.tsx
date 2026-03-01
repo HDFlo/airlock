@@ -214,9 +214,34 @@ export function RunDetail() {
 
       if (!cancelled) {
         setAllComments(loadedComments);
-        setSelectedComments(new Set(loadedComments.filter((c) => c.severity === 'error').map(getCommentKey)));
+        setSelectedComments((prev) => {
+          const prevKeys = new Set(prev);
+          const allKeys = new Set(loadedComments.map(getCommentKey));
+          // Keep existing selections that are still valid, add defaults for new items only
+          const next = new Set<string>();
+          for (const key of prevKeys) {
+            if (allKeys.has(key)) next.add(key);
+          }
+          for (const c of loadedComments) {
+            const key = getCommentKey(c);
+            if (!prevKeys.has(key) && c.severity === 'error') next.add(key);
+          }
+          return next;
+        });
         setAllPatches(loadedPatches);
-        setSelectedPatches(new Set(loadedPatches.filter((p) => !p.applied).map((p) => p.id)));
+        setSelectedPatches((prev) => {
+          const prevIds = new Set(prev);
+          const allIds = new Set(loadedPatches.map((p) => p.id));
+          // Keep existing selections that are still valid, add defaults for new items only
+          const next = new Set<string>();
+          for (const id of prevIds) {
+            if (allIds.has(id)) next.add(id);
+          }
+          for (const p of loadedPatches) {
+            if (!prevIds.has(p.id) && !p.applied) next.add(p.id);
+          }
+          return next;
+        });
         setArtifactDataLoading(false);
       }
     }
@@ -276,7 +301,7 @@ export function RunDetail() {
     if (!awaitingStep || !runId) return;
     try {
       setApplyingAndApproving(true);
-      const paths = allPatches.filter((p) => selectedPatches.has(p.id)).map((p) => p.artifactPath);
+      const paths = allPatches.filter((p) => !p.applied && selectedPatches.has(p.id)).map((p) => p.artifactPath);
       if (paths.length > 0) {
         await applyPatches(runId, paths);
       }
