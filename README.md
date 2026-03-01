@@ -28,8 +28,6 @@ flowchart LR
   before ~~~ after
 ```
 
-![Airlock Push Request — Overview with architecture diagram](assets/screenshot1-overview-diagram.png)
-
 ## Install
 
 ```bash
@@ -49,6 +47,8 @@ git push origin feature-branch   # triggers the pipeline
 ```
 
 That's it. Airlock intercepts the push, runs your pipeline, and opens a **Push Request** in the desktop app for self-review. When you approve, it forwards to GitHub and creates a PR.
+
+![Airlock Push Request — Overview with architecture diagram](assets/screenshot1-overview-diagram.png)
 
 During `airlock init`, you'll choose how strict the push gate should be:
 
