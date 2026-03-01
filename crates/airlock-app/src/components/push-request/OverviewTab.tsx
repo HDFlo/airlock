@@ -1,16 +1,16 @@
-import type { StepResultInfo, JobResultInfo } from '@/hooks/use-daemon';
-import { PipelineChart } from './PipelineChart';
+import type { ArtifactInfo } from '@/hooks/use-daemon';
+import { ActivityFeed } from './activity-feed';
 
 interface OverviewTabProps {
-  jobs: JobResultInfo[];
-  steps: StepResultInfo[];
-  onStepClick: (jobKey: string, stepName: string) => void;
+  artifacts: ArtifactInfo[];
+  runId: string;
+  onPatchApplied?: () => void;
 }
 
-export function OverviewTab({ jobs, steps, onStepClick }: OverviewTabProps) {
+export function OverviewTab({ artifacts, runId, onPatchApplied }: OverviewTabProps) {
   return (
-    <div className="h-full overflow-y-auto p-8">
-      <PipelineChart jobs={jobs} steps={steps} onStepClick={onStepClick} />
+    <div className="h-full overflow-y-auto">
+      <ActivityFeed artifacts={artifacts} runId={runId} onPatchApplied={onPatchApplied} />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { readArtifact, applyPatches, type ArtifactInfo } from '@/hooks/use-daemon';
 import { Loader2, FileCode, Check, ChevronDown, ChevronRight, CheckCircle2, Layers, AlertCircle } from 'lucide-react';
-import { Button } from '@airlock-hq/design-system/react';
+import { Button, ExpandableCard } from '@airlock-hq/design-system/react';
 import { cn } from '@/lib/utils';
 
 interface PatchArtifact {
@@ -293,7 +293,9 @@ function PatchItem({ patch, isExpanded, onToggleExpand, variant, isSelected, onT
 
       {isExpanded && (
         <div className="border-t">
-          <DiffPreview diff={patch.diff} />
+          <ExpandableCard>
+            <DiffPreview diff={patch.diff} />
+          </ExpandableCard>
         </div>
       )}
     </div>
@@ -337,7 +339,7 @@ function DiffPreview({ diff }: DiffPreviewProps) {
   const lines = diff.split('\n');
 
   return (
-    <div className="text-micro max-h-96 overflow-auto font-mono">
+    <div className="text-micro font-mono">
       {lines.map((line, index) => {
         let className = 'px-4 py-0.5';
         if (line.startsWith('+') && !line.startsWith('+++')) {

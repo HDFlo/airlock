@@ -1,8 +1,16 @@
 import { Button, StatusDot } from '@airlock-hq/design-system/react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@airlock-hq/design-system/react';
 import { ActivityTab, OverviewTab, ChangesTab, PatchesTab, ContentTab } from '@/components/push-request';
+import { StepProgressBar } from '@/components/push-request/activity-feed/StepProgressBar';
 import type { StepSelection } from '@/components/StagesSidebar';
-import { useRunDetail, useRepos, getRepoNameFromUrl, reprocessRun, approveStep } from '@/hooks/use-daemon';
+import {
+  useRunDetail,
+  useRepos,
+  getRepoNameFromUrl,
+  reprocessRun,
+  approveStep,
+  readArtifact,
+} from '@/hooks/use-daemon';
 import {
   Loader2,
   RefreshCw,
@@ -15,7 +23,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 
 function getRunStatusDotProps(status: string): {
   variant: 'success' | 'danger' | 'warning' | 'signal' | 'muted';
@@ -133,13 +141,43 @@ export function RunDetail() {
     ).length;
   }, [detail?.artifacts]);
 
-  // Count comment files for Critique tab badge
-  const commentCount = useMemo(() => {
-    if (!detail?.artifacts) return 0;
-    return detail.artifacts.filter(
-      (a) => a.artifact_type === 'file' && a.path.includes('/comments/') && a.path.endsWith('.json')
-    ).length;
-  }, [detail?.artifacts]);
+  // Count individual comments (not files) for Critique tab badge
+  const commentFiles = useMemo(
+    () =>
+      (detail?.artifacts ?? []).filter(
+        (a) => a.artifact_type === 'file' && a.path.includes('/comments/') && a.path.endsWith('.json')
+      ),
+    [detail?.artifacts]
+  );
+  const [commentCount, setCommentCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    async function countComments() {
+      let total = 0;
+      for (const file of commentFiles) {
+        try {
+          const result = await readArtifact(file.path);
+          if (!result.is_binary) {
+            const parsed = JSON.parse(result.content);
+            if (Array.isArray(parsed.comments)) {
+              total += parsed.comments.length;
+            }
+          }
+        } catch {
+          // skip unreadable files
+        }
+      }
+      if (!cancelled) setCommentCount(total);
+    }
+    if (commentFiles.length > 0) {
+      countComments();
+    } else {
+      setCommentCount(0);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [commentFiles]);
 
   // Store active tab in URL search params so it survives refreshes and is shareable
   const [searchParams, setSearchParams] = useSearchParams();
@@ -246,6 +284,25 @@ export function RunDetail() {
         </div>
       )}
 
+      {/* Step progress bar */}
+      {detail && (
+        <StepProgressBar
+          steps={detail.step_results}
+          onStepClick={(jobKey, stepName) => {
+            setSearchParams(
+              (prev) => {
+                const next = new URLSearchParams(prev);
+                next.set('tab', 'activity');
+                next.set('job', jobKey);
+                next.set('step', stepName);
+                return next;
+              },
+              { replace: true }
+            );
+          }}
+        />
+      )}
+
       {/* Main content area with tabs */}
       <div className="border-border-subtle bg-background/60 flex min-h-0 flex-1 flex-col rounded-lg border">
         {loading && !detail ? (
@@ -287,22 +344,7 @@ export function RunDetail() {
             </TabsList>
 
             <TabsContent value="overview" className="mt-0 min-h-0 flex-1">
-              <OverviewTab
-                jobs={detail.jobs}
-                steps={detail.step_results}
-                onStepClick={(jobKey, stepName) => {
-                  setSearchParams(
-                    (prev) => {
-                      const next = new URLSearchParams(prev);
-                      next.set('tab', 'activity');
-                      next.set('job', jobKey);
-                      next.set('step', stepName);
-                      return next;
-                    },
-                    { replace: true }
-                  );
-                }}
-              />
+              <OverviewTab artifacts={detail.artifacts} runId={runId!} onPatchApplied={refresh} />
             </TabsContent>
 
             <TabsContent value="activity" className="mt-0 min-h-0 flex-1">

@@ -184,7 +184,7 @@ function DiagramViewer({ svgContent }: { svgContent: string }) {
         minScale={0.1}
         maxScale={4}
         centerOnInit
-        wheel={{ step: -0.2, smoothStep: -0.003 }}
+        wheel={{ disabled: true }}
       >
         <Controls />
         <TransformComponent
