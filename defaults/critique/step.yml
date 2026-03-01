@@ -66,15 +66,3 @@ run: |
       airlock artifact comment --batch-file "$BATCH_FILE"
       rm -f "$BATCH_FILE"
   fi
-
-  # Write summary as content artifact
-  {
-    if [[ "$COMMENT_COUNT" -gt 0 ]]; then
-        printf "## Code Critique\n\n"
-        printf "**%d comment(s)** found.\n\n" "$COMMENT_COUNT"
-        printf "%s\n" "$SUMMARY"
-    else
-        printf "## Code Critique\n\n"
-        printf "No issues found. %s\n" "$SUMMARY"
-    fi
-  } | airlock artifact content --title "Code Critique"
