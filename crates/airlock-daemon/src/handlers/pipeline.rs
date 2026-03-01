@@ -603,8 +603,10 @@ pub(super) struct StepSequenceParams<'a> {
     pub worktree_path: &'a Path,
     pub effective_base_sha: &'a str,
     pub cancel: Option<&'a CancellationToken>,
-    /// If set, clear the approval gate on this step name (pre-paused re-execution).
-    pub clear_approval_for_step: Option<&'a str>,
+    /// If set, clear the approval gate on the step at this order index (pre-paused re-execution).
+    /// Uses step_order instead of name to avoid clearing approval on the wrong step
+    /// when duplicate step names exist.
+    pub clear_approval_for_step: Option<i32>,
     /// The step_order offset for the first step in `steps`.
     /// Used to match step results by `step_order` instead of name,
     /// avoiding corruption when duplicate step names exist.
@@ -689,8 +691,10 @@ pub(super) async fn execute_step_sequence(
 
         // If this is the pre-paused step being re-executed after approval,
         // clear the approval gate — the user already approved.
-        if let Some(approved_name) = params.clear_approval_for_step {
-            if step.name == approved_name {
+        // Match by step_order (not name) to only clear the originally approved step,
+        // even when duplicate step names exist.
+        if let Some(approved_order) = params.clear_approval_for_step {
+            if expected_order == approved_order {
                 resolved_step.require_approval = ApprovalMode::Never;
             }
         }

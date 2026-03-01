@@ -86,29 +86,27 @@ pub async fn handle_approve_step(
         }
     };
 
-    // Find the step to approve (matching both step_name and job_key via job_id)
-    let step_result = match step_results.iter().find(|r| r.name == params.step_name) {
+    // Find the step to approve by name AND AwaitingApproval status.
+    // Using status as a filter avoids matching the wrong step when duplicate names exist.
+    let step_result = match step_results
+        .iter()
+        .find(|r| r.name == params.step_name && r.status == StepStatus::AwaitingApproval)
+    {
         Some(sr) => sr.clone(),
         None => {
             return Response::error(
                 id,
                 error_codes::STEP_NOT_FOUND,
-                format!("Step '{}' not found in run", params.step_name),
+                format!(
+                    "Step '{}' not found or not awaiting approval in run",
+                    params.step_name
+                ),
             )
         }
     };
 
-    // Validate status
-    if step_result.status != StepStatus::AwaitingApproval {
-        return Response::error(
-            id,
-            error_codes::INVALID_STEP_STATUS,
-            format!(
-                "Step '{}' is not awaiting approval (status: {:?})",
-                params.step_name, step_result.status
-            ),
-        );
-    }
+    // Capture step_order before moving step_result
+    let approved_step_order = step_result.step_order;
 
     // Update step status to Passed
     let mut updated_step = step_result;
@@ -162,7 +160,8 @@ pub async fn handle_approve_step(
     let step_name = params.step_name.clone();
     let job_key = params.job_key.clone();
     tokio::spawn(async move {
-        resume_pipeline_after_approval(ctx, run, repo, &job_key, &step_name).await;
+        resume_pipeline_after_approval(ctx, run, repo, &job_key, &step_name, approved_step_order)
+            .await;
     });
 
     // Return success immediately - pipeline continues in background
@@ -192,10 +191,11 @@ async fn resume_pipeline_after_approval(
     repo: airlock_core::Repo,
     approved_job_key: &str,
     approved_step_name: &str,
+    approved_step_order: i32,
 ) {
     info!(
-        "Resuming pipeline for run {} after approval of step '{}' in job '{}'",
-        run.id, approved_step_name, approved_job_key
+        "Resuming pipeline for run {} after approval of step '{}' (order={}) in job '{}'",
+        run.id, approved_step_name, approved_step_order, approved_job_key
     );
 
     // Load workflow configuration from the pushed commit in the gate
@@ -229,30 +229,28 @@ async fn resume_pipeline_after_approval(
     let job_config = workflow.jobs.get(approved_job_key).unwrap().clone();
     let keep_worktrees = job_config.keep_worktrees;
 
-    // Find the approved step index within the job
-    let approved_idx = match job_config
-        .steps
-        .iter()
-        .position(|s| s.name == approved_step_name)
-    {
-        Some(idx) => idx,
-        None => {
-            error!(
-                "Step '{}' not found in job '{}'",
-                approved_step_name, approved_job_key
-            );
-            return;
-        }
-    };
+    // Use step_order directly as the index within the job.
+    // This avoids misidentifying the step when duplicate step names exist.
+    let approved_idx = approved_step_order as usize;
+    if approved_idx >= job_config.steps.len() {
+        error!(
+            "Step order {} out of bounds for job '{}' (has {} steps)",
+            approved_step_order,
+            approved_job_key,
+            job_config.steps.len()
+        );
+        return;
+    }
 
     // Check if the approved step was paused before execution (pre-execution pause).
     // If so, re-execute it. Otherwise, start from the next step.
+    // Match by step_order to avoid ambiguity with duplicate step names.
     let step_was_pre_paused = {
         let db = ctx.db.lock().await;
         match db.get_step_results_for_run(&run.id) {
             Ok(results) => results
                 .iter()
-                .find(|r| r.name == approved_step_name)
+                .find(|r| r.step_order == approved_step_order)
                 .map(|r| r.exit_code.is_none())
                 .unwrap_or(false),
             Err(_) => false,
@@ -359,7 +357,7 @@ async fn resume_pipeline_after_approval(
 
     // Execute remaining steps
     let clear_approval = if step_was_pre_paused {
-        Some(approved_step_name)
+        Some(approved_step_order)
     } else {
         None
     };
@@ -1074,7 +1072,8 @@ mod tests {
 
         assert!(response.error.is_some());
         let error = response.error.unwrap();
-        assert_eq!(error.code, error_codes::INVALID_STEP_STATUS);
+        // Step in Passed status won't match the AwaitingApproval filter, so we get STEP_NOT_FOUND.
+        assert_eq!(error.code, error_codes::STEP_NOT_FOUND);
     }
 
     #[tokio::test]
