@@ -177,25 +177,25 @@ The Push Request view is where you review and approve changes before they ship.
 
 ### 3.3 Key Tabs
 
-**Overview** — All content artifacts rendered as sections:
+**Overview** — Unified artifact feed for review:
 
-- Summaries, walkthroughs, diagrams (all markdown)
-- Code review comments summarized
-- Test evidence and results
+- Content artifacts (markdown) rendered inline
+- Critique comment artifacts with per-comment selection
+- Patch artifacts with per-patch selection
 
 **Critique** — Diff viewer with inline comments:
 
 - Standard diff view
 - Comments from review stages anchored to specific lines
 - Tab badge shows the number of critique comments
-- Click a comment to jump to that location
+- Comments can be toggled for copy/share selection
 
 **Patches** — Suggested fixes from stages:
 
 - Each patch shows title, explanation, and diff preview
 - Select which patches to apply
-- "Apply & Re-run" creates new commit, triggers fresh analysis
-- "Apply & Ship" applies patches and pushes immediately (with staleness warning)
+- Apply selected patches as a commit in the run worktree
+- Selection is shared with the approval action when the run is awaiting approval
 
 **Activity** — Pipeline execution history:
 

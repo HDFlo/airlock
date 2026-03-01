@@ -634,7 +634,7 @@ Helper methods on `Run`:
 2. Stage completes → Stage `Passed`, next stage `Running`
 3. Stage with `require_approval=true` completes → Stage `AwaitingApproval`
 4. User approves → Stage `Passed`, next stage `Running`
-5. User approves with patches → patches applied, new commit, re-run pipeline
+5. User applies selected patches and approves → patches applied as a commit, then pipeline resumes from the approval gate
 6. User rejects → Stage `Failed`
 7. All stages done → Push Request `Shipped` or `Failed`
 
@@ -685,9 +685,9 @@ The main view where users review and approve changes:
 
 **Overview Tab:**
 
-- All content artifacts rendered as markdown sections
-- Comments summarized with severity counts
-- Quick stats (files changed, tests passed)
+- Unified artifact feed (content, comment, patch artifacts)
+- Content markdown rendered inline
+- Critique comments and patches can be selected directly from the feed
 
 **Critique Tab:**
 
@@ -701,7 +701,7 @@ The main view where users review and approve changes:
 - List of suggested patches from post-freeze stages
 - Each shows title, explanation, diff preview
 - Checkboxes to select which patches to apply
-- Actions: "Apply & Re-run" or "Apply & Ship"
+- Action: apply selected patches as a commit
 
 **Activity Tab:**
 
@@ -713,11 +713,11 @@ The main view where users review and approve changes:
 
 When user reviews patches:
 
-1. **Approve as-is** — Push the frozen code without suggested patches
-2. **Apply & Re-run** — Select patches, apply as new commit, trigger fresh pipeline run
-3. **Apply & Ship** — Apply patches and push immediately (shows staleness warning)
+1. **Approve as-is** — Resume pipeline without applying suggested patches
+2. **Apply patches only** — Select patches and apply as a commit, then continue reviewing
+3. **Apply patches & approve** — Apply selected patches, then approve in one action
 
-Option 2 is recommended because analysis artifacts will be regenerated for the new code state.
+Option 3 is the fastest path when selected patches are ready and no further manual review is needed.
 
 ---
 
