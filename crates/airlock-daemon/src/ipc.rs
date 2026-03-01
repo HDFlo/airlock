@@ -144,9 +144,6 @@ pub mod error_codes {
     /// Database operation failed.
     pub const DATABASE_ERROR: i32 = -32021;
 
-    /// Invalid step status for the requested operation.
-    pub const INVALID_STEP_STATUS: i32 = -32023;
-
     /// Step not found.
     pub const STEP_NOT_FOUND: i32 = -32024;
 }
