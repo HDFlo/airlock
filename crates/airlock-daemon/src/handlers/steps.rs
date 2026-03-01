@@ -74,8 +74,29 @@ pub async fn handle_approve_step(
         }
     };
 
-    // Get step results for the run
-    let step_results = match db.get_step_results_for_run(&params.run_id) {
+    // Resolve job_id from job_key so we scope the step lookup to the correct job.
+    let job_id = match db.get_job_results_for_run(&params.run_id) {
+        Ok(jobs) => match jobs.iter().find(|j| j.job_key == params.job_key) {
+            Some(j) => j.id.clone(),
+            None => {
+                return Response::error(
+                    id,
+                    error_codes::STEP_NOT_FOUND,
+                    format!("Job '{}' not found in run", params.job_key),
+                )
+            }
+        },
+        Err(e) => {
+            return Response::error(
+                id,
+                error_codes::DATABASE_ERROR,
+                format!("Failed to get job results: {}", e),
+            )
+        }
+    };
+
+    // Get step results scoped to this specific job.
+    let step_results = match db.get_step_results_for_job(&job_id) {
         Ok(r) => r,
         Err(e) => {
             return Response::error(
@@ -86,8 +107,7 @@ pub async fn handle_approve_step(
         }
     };
 
-    // Find the step to approve by name AND AwaitingApproval status.
-    // Using status as a filter avoids matching the wrong step when duplicate names exist.
+    // Find the step to approve by name AND AwaitingApproval status within this job.
     let step_result = match step_results
         .iter()
         .find(|r| r.name == params.step_name && r.status == StepStatus::AwaitingApproval)
@@ -242,12 +262,35 @@ async fn resume_pipeline_after_approval(
         return;
     }
 
+    // Resolve job_id early so we can scope step lookups to this job.
+    let job_id = {
+        let db = ctx.db.lock().await;
+        match db.get_job_results_for_run(&run.id) {
+            Ok(jobs) => jobs
+                .iter()
+                .find(|j| j.job_key == approved_job_key)
+                .map(|j| j.id.clone()),
+            Err(_) => None,
+        }
+    };
+
+    let job_id = match job_id {
+        Some(id) => id,
+        None => {
+            error!(
+                "Job result for '{}' not found in database",
+                approved_job_key
+            );
+            return;
+        }
+    };
+
     // Check if the approved step was paused before execution (pre-execution pause).
     // If so, re-execute it. Otherwise, start from the next step.
-    // Match by step_order to avoid ambiguity with duplicate step names.
+    // Scope to this job's steps to avoid matching another job's step with the same order.
     let step_was_pre_paused = {
         let db = ctx.db.lock().await;
-        match db.get_step_results_for_run(&run.id) {
+        match db.get_step_results_for_job(&job_id) {
             Ok(results) => results
                 .iter()
                 .find(|r| r.step_order == approved_step_order)
@@ -320,29 +363,6 @@ async fn resume_pipeline_after_approval(
         );
         return;
     }
-
-    // Get existing step results for this job
-    let job_id = {
-        let db = ctx.db.lock().await;
-        match db.get_job_results_for_run(&run.id) {
-            Ok(jobs) => jobs
-                .iter()
-                .find(|j| j.job_key == approved_job_key)
-                .map(|j| j.id.clone()),
-            Err(_) => None,
-        }
-    };
-
-    let job_id = match job_id {
-        Some(id) => id,
-        None => {
-            error!(
-                "Job result for '{}' not found in database",
-                approved_job_key
-            );
-            return;
-        }
-    };
 
     let mut step_results = {
         let db = ctx.db.lock().await;
