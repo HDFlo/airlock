@@ -1,0 +1,7 @@
+{
+  "content": "{\"title\":\"Fix lint issues after rebase\",\"explanation\":\"Removed an unused import and added a missing trailing comma detected by the linter after rebasing.\",\"diff\":\"diff --git a/src/services/auth.ts b/src/services/auth.ts\\nindex 9a8b7c6..d5e4f3a 100644\\n--- a/src/services/auth.ts\\n+++ b/src/services/auth.ts\\n@@ -11,7 +11,6 @@\\n import { hashPassword, verifyPassword } from '../utils/crypto';\\n import { UserRepository } from '../repositories/user';\\n import { TokenService } from './token';\\n-import { Logger } from '../utils/logger';\\n import { AuthError } from '../errors';\\n \\n export class AuthService {\\ndiff --git a/src/middleware/auth.ts b/src/middleware/auth.ts\\nindex 1f2e3d4..a5b6c7d 100644\\n--- a/src/middleware/auth.ts\\n+++ b/src/middleware/auth.ts\\n@@ -25,7 +25,7 @@\\n   const config = {\\n     algorithms: ['HS256'],\\n     issuer: 'airlock',\\n-    audience: 'api'\\n+    audience: 'api',\\n   };\\n\"}",
+  "is_binary": false,
+  "total_size": 400,
+  "bytes_read": 400,
+  "offset": 0
+}

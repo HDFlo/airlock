@@ -1,7 +1,7 @@
 {
-  "content": "---\ntitle: \"Test Results\"\n---\n\n**\u23ed\ufe0f Tests Skipped**\n\n## Summary\nValidated the changed file and ran the repository test suite, but full-suite results were flaky and not consistently reproducible; isolated reruns of failing tests passed, and failures appear unrelated to this UI change.\n\n## Details\nDiff scope is one frontend line change in `crates/airlock-app/src/components/MermaidDiagram.tsx` (`TransformWrapper` wheel step changed from `0.1` to `-0.1`). Ran `make test` multiple times (`cargo test --workspace --exclude airlock-app`). Full-suite runs were not stable: first failed at `commands::status::tests::test_check_daemon_status_not_responding`, another failed at `git::show::tests::test_show_file_works_with_bare_repo` (branch-name/env dependent `master` refspec), and another failed at `commands::doctor::tests::git_tests::test_e2e_doctor_checks_daemon_socket_exists_but_not_responding`. Re-ran each failing test individually with exact selectors; each passed in isolation, indicating flaky/environment-sensitive failures unrelated to this frontend change. No dedicated automated tests exist for this React component in this repo's current test targets.\n",
+  "content": "---\ntitle: \"Test Results\"\n---\n\n**All Tests Passed**\n\n## Summary\nRan the full test suite after adding the authentication module. All 247 tests passed, including 12 new tests covering the auth endpoints and middleware.\n\n## Results\n\n| Suite | Tests | Passed | Duration |\n|-------|-------|--------|----------|\n| Unit Tests | 198 | 198 | 4.2s |\n| Integration Tests | 37 | 37 | 12.8s |\n| Auth Module (new) | 12 | 12 | 1.6s |\n| **Total** | **247** | **247** | **18.6s** |\n\n## New Test Coverage\n- `auth.login` - valid credentials, invalid password, missing user\n- `auth.refresh` - token refresh, expired token rejection\n- `auth.middleware` - route protection, token extraction, role verification\n- `user.repository` - create user, find by email, password hashing\n",
   "is_binary": false,
-  "total_size": 920,
-  "bytes_read": 920,
+  "total_size": 700,
+  "bytes_read": 700,
   "offset": 0
 }

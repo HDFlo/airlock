@@ -42,16 +42,26 @@ export const mockRepos: RepoInfo[] = fixtures.getAllRepos().map((r) => ({
 // Mock Runs - Using generated fixtures from database export
 // =============================================================================
 
-// Build runs indexed by repo ID from fixtures
-export const mockRuns: Record<string, RunInfo[]> = {};
-for (const repo of mockRepos) {
-  const runs = fixtures.getRunsForRepo(repo.id);
-  mockRuns[repo.id] = runs.map((run) => ({
-    ...run,
-    repo_id: repo.id,
-    error: null,
-  })) as RunInfo[];
+// Build runs indexed by repo ID from fixtures (with dynamic timestamps)
+function buildMockRuns(): Record<string, RunInfo[]> {
+  const result: Record<string, RunInfo[]> = {};
+  const nowSec = Math.floor(Date.now() / 1000);
+  for (const repo of mockRepos) {
+    const runs = fixtures.getRunsForRepo(repo.id);
+    // Find the latest timestamp across all runs to compute offset
+    const latestTs = Math.max(...runs.map((r) => Math.max(r.created_at, r.updated_at)));
+    const offset = nowSec - latestTs - 120;
+    result[repo.id] = runs.map((run) => ({
+      ...run,
+      repo_id: repo.id,
+      error: null,
+      created_at: run.created_at + offset,
+      updated_at: run.updated_at + offset,
+    })) as RunInfo[];
+  }
+  return result;
 }
+export const mockRuns: Record<string, RunInfo[]> = buildMockRuns();
 
 // =============================================================================
 // Mock Step Results - Extracted from run details
@@ -127,14 +137,38 @@ export const mockHealth: HealthResponse = {
 export function getRunDetail(runId: string): RunDetail | null {
   const fixtureDetail = fixtures.findRunDetail(runId);
   if (fixtureDetail) {
+    // Adjust timestamps so the run always appears recent in the UI
+    const allTimestamps = [
+      fixtureDetail.run.created_at,
+      fixtureDetail.run.updated_at,
+      ...fixtureDetail.step_results.map((s) => s.completed_at || s.started_at || 0),
+      ...(fixtureDetail.artifacts ?? []).map((a) => a.created_at),
+    ];
+    const latestTs = Math.max(...allTimestamps);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const offset = nowSec - latestTs - 120; // make latest event ~2 minutes ago
+
     return {
       run: {
         ...fixtureDetail.run,
         repo_id: fixtureDetail.run.repo_id,
+        created_at: fixtureDetail.run.created_at + offset,
+        updated_at: fixtureDetail.run.updated_at + offset,
       } as RunDetail['run'],
-      jobs: (fixtureDetail.jobs ?? []) as JobResultInfo[],
-      step_results: fixtureDetail.step_results as StepResultInfo[],
-      artifacts: (fixtureDetail.artifacts ?? []) as ArtifactInfo[],
+      jobs: (fixtureDetail.jobs ?? []).map((j) => ({
+        ...j,
+        started_at: j.started_at ? j.started_at + offset : j.started_at,
+        completed_at: j.completed_at ? j.completed_at + offset : j.completed_at,
+      })) as JobResultInfo[],
+      step_results: fixtureDetail.step_results.map((s) => ({
+        ...s,
+        started_at: s.started_at ? s.started_at + offset : s.started_at,
+        completed_at: s.completed_at ? s.completed_at + offset : s.completed_at,
+      })) as StepResultInfo[],
+      artifacts: (fixtureDetail.artifacts ?? []).map((a) => ({
+        ...a,
+        created_at: a.created_at + offset,
+      })) as ArtifactInfo[],
     };
   }
   return null;

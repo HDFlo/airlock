@@ -1,7 +1,3 @@
 {
-  "content": "{\"title\":\"Fix import ordering\",\"explanation\":\"Reorder imports to follow the project convention: stdlib first, then third-party, then local modules.\",\"diff\":\"diff --git a/src/main.ts b/src/main.ts\\nindex 1234567..abcdefg 100644\\n--- a/src/main.ts\\n+++ b/src/main.ts\\n@@ -1,5 +1,5 @@\\n-import { render } from './components';\\n-import path from 'path';\\n import fs from 'fs';\\n+import path from 'path';\\n+import { render } from './components';\\n import { Config } from './config';\\n import express from 'express';\"}",
-  "is_binary": false,
-  "total_size": 512,
-  "bytes_read": 512,
-  "offset": 0
+  "content": "{\"title\":\"Update API documentation\",\"explanation\":\"Add authentication endpoints and JWT token usage to the API reference.\",\"diff\":\"diff --git a/docs/api-reference.md b/docs/api-reference.md\\nindex 1234567..abcdefg 100644\\n--- a/docs/api-reference.md\\n+++ b/docs/api-reference.md\\n@@ -12,6 +12,32 @@\\n ## Endpoints\\n \\n ### Health Check\\n+\\n+### Authentication\\n+\\n+All auth endpoints are prefixed with `/auth`.\\n+\\n+#### POST /auth/login\\n+Authenticate a user and receive a JWT token.\\n+\\n+**Request Body:**\\n+| Field | Type | Required |\\n+|-------|------|----------|\\n+| email | string | Yes |\\n+| password | string | Yes |\\n+\\n+**Response (200):**\\n+```json\\n+{ \\\"token\\\": \\\"eyJhbG...\\\", \\\"expires_in\\\": 3600 }\\n+```\\n+\\n+#### POST /auth/refresh\\n+Refresh an expiring JWT token. Send the current token in the\\n+`Authorization: Bearer <token>` header.\\n+\\n+#### GET /auth/me\\n+Returns the authenticated user's profile.\\n+Requires a valid JWT token in the Authorization header.\\n\"}"
 }

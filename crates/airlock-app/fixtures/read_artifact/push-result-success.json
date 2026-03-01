@@ -1,7 +1,7 @@
 {
-  "content": "---\ntitle: \"Push Result\"\n---\n\n# Push Successful\n\n**Branch:** `main`\n**Upstream:** `git@github.com-airlock:airlock-hq/airlock.git`\n**Commit:** `daad974c3a2d25ba4374faf9cd42a6de1cf2b5b2`\n",
+  "content": "---\ntitle: \"Rebase Result\"\n---\n\n**Rebase Successful**\n\n## Summary\nRebased `feature/add-user-auth` onto `main` (3 commits ahead). Detected and automatically resolved 1 merge conflict.\n\n## Merge Conflict Resolved\n**File:** `src/routes/api.ts`\n\nThe upstream `main` branch added a new `/health` endpoint at line 42, which conflicted with the new auth route registration in this branch. The agent resolved it by keeping both additions and adjusting the route order to maintain alphabetical grouping.\n",
   "is_binary": false,
-  "total_size": 210,
-  "bytes_read": 210,
+  "total_size": 480,
+  "bytes_read": 480,
   "offset": 0
 }

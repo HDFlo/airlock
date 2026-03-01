@@ -30,6 +30,7 @@ import artifactPatchFixTypos from '../../fixtures/read_artifact/patch-fix-typos.
 import artifactPushResultFailed from '../../fixtures/read_artifact/push-result-failed.json';
 import artifactTestResults from '../../fixtures/read_artifact/test-results.json';
 import artifactPushResultSuccess from '../../fixtures/read_artifact/push-result-success.json';
+import artifactPatchLintFix from '../../fixtures/read_artifact/patch-lint-fix.json';
 import artifactCritiqueComments from '../../fixtures/read_artifact/critique-comments.json';
 
 // Import run diffs
@@ -49,6 +50,8 @@ const artifactPathMappings: Record<string, string> = {
     '/Users/bakerxiao/.airlock/artifacts/85960af40743/fce62dbf-ad28-4f7e-b3c5-e60d956d73ad/patches/patch-add-error-handling.json',
   'patch-update-types':
     '/Users/bakerxiao/.airlock/artifacts/85960af40743/fce62dbf-ad28-4f7e-b3c5-e60d956d73ad/patches/patch-update-types.json',
+  'patch-lint-fix':
+    '/Users/bakerxiao/.airlock/artifacts/85960af40743/fce62dbf-ad28-4f7e-b3c5-e60d956d73ad/patches/patch-lint-fix.json',
   'patch-fix-typos':
     '/Users/bakerxiao/.airlock/artifacts/85960af40743/a43179d6-85bb-45a5-b637-57a75335638c/patches/patch-fix-typos.json',
   'push-result-failed':
@@ -217,6 +220,7 @@ const artifactContentByHash: Record<string, ReadArtifactResult> = {
   'patch-fix-import': artifactPatchFixImport as ReadArtifactResult,
   'patch-add-error-handling': artifactPatchAddErrorHandling as ReadArtifactResult,
   'patch-update-types': artifactPatchUpdateTypes as ReadArtifactResult,
+  'patch-lint-fix': artifactPatchLintFix as ReadArtifactResult,
   'patch-fix-typos': artifactPatchFixTypos as ReadArtifactResult,
   'push-result-failed': artifactPushResultFailed as ReadArtifactResult,
   'test-results': artifactTestResults as ReadArtifactResult,

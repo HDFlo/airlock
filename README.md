@@ -28,6 +28,8 @@ flowchart LR
   before ~~~ after
 ```
 
+![Airlock Push Request — Overview with architecture diagram](assets/screenshot1-overview-diagram.png)
+
 ## Install
 
 ```bash
@@ -71,6 +73,12 @@ Airlock handles the basic review, validation and clean up, so you can focus on m
 | No docs           | Functions documented          |
 | No PR description | Rich summary with walkthrough |
 | Hardcoded secrets | Flagged for review            |
+
+![Rebase with merge conflict auto-resolved and lint fix patch](assets/screenshot2-overview-rebase.png)
+
+![Test results — all 247 tests passing](assets/screenshot3-overview-tests.png)
+
+![Documentation patch and critique comments](assets/screenshot4-overview-critique.png)
 
 ## How It Works
 

@@ -1,7 +1,7 @@
 {
-  "content": "{\"comments\":[{\"file\":\"src/database.ts\",\"line\":5,\"message\":\"The connection pool is created on every import. Consider using a singleton pattern or lazy initialization to avoid multiple pool instances.\",\"severity\":\"warning\"},{\"file\":\"src/database.ts\",\"line\":13,\"message\":\"client.release() in the finally block will swallow the original error if release() itself throws. Consider wrapping release() in a try-catch.\",\"severity\":\"error\"},{\"file\":\".airlock/config.yml\",\"line\":13,\"message\":\"Piping into airlock artifact content is cleaner than the heredoc approach — good simplification.\",\"severity\":\"info\"}]}",
+  "content": "{\"comments\":[{\"file\":\"src/services/auth.ts\",\"line\":42,\"message\":\"JWT secret is loaded from environment at module scope. If `AUTH_JWT_SECRET` is unset, this throws at import time rather than at first use. Consider lazy initialization or a startup validation step.\",\"severity\":\"warning\"},{\"file\":\"src/middleware/auth.ts\",\"line\":18,\"message\":\"The token expiry check uses `Date.now()` which returns milliseconds, but `exp` in JWT claims is in seconds. This will cause all tokens to appear valid. Divide by 1000.\",\"severity\":\"error\"},{\"file\":\"src/repositories/user.ts\",\"line\":67,\"message\":\"Good use of parameterized queries here — this prevents SQL injection on the email lookup.\",\"severity\":\"info\"},{\"file\":\"src/services/auth.ts\",\"line\":89,\"message\":\"The bcrypt cost factor is hardcoded to 10. Consider extracting this to a config constant so it can be tuned per environment.\",\"severity\":\"warning\"}]}",
   "is_binary": false,
-  "total_size": 600,
-  "bytes_read": 600,
+  "total_size": 800,
+  "bytes_read": 800,
   "offset": 0
 }
