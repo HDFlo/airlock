@@ -75,7 +75,6 @@ function RunRow({ run }: { run: RunWithRepo }) {
         >
           {run.branch || `Run #${run.id.slice(-8)}`}
         </Link>
-        {run.error && <p className="text-micro text-danger mt-1 truncate">{run.error}</p>}
       </div>
       <span className="text-small text-foreground-muted">{run.repo_name}</span>
       <span className="text-micro text-foreground-muted font-mono">{formatTimeAgo(run.created_at)}</span>
