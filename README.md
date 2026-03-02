@@ -74,11 +74,14 @@ Airlock handles the basic review, validation and clean up, so you can focus on m
 | No PR description | Rich summary with walkthrough |
 | Hardcoded secrets | Flagged for review            |
 
-![Rebase with merge conflict auto-resolved and lint fix patch](assets/screenshot2-overview-rebase.png)
+![Rebase with merge conflict auto-resolved](assets/screenshot2-overview-rebase.png)
+_The rebase step detected a merge conflict in `src/routes/api.ts` and resolved it automatically._
 
 ![Test results — all 247 tests passing](assets/screenshot3-overview-tests.png)
+_Full test suite ran after changes — 247 tests passing, including 12 new tests the agent wrote for the auth module._
 
-![Documentation patch and critique comments](assets/screenshot4-overview-critique.png)
+![Critique comments](assets/screenshot4-overview-critique.png)
+_The critique step found a real bug (milliseconds vs seconds in token expiry) and flagged it before the code ever left your machine._
 
 ## How It Works
 
