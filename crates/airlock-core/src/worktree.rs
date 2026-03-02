@@ -195,21 +195,23 @@ pub fn reset_persistent_worktree(
         head_sha
     );
 
-    // Detach HEAD at the target commit
+    // Reset all tracked files to match the target commit.
+    // git reset --hard moves HEAD and resets the working tree in one step,
+    // even when dirty tracked files exist (unlike git checkout --detach).
     let output = Command::new("git")
-        .args(["checkout", "--detach", head_sha])
+        .args(["reset", "--hard", head_sha])
         .current_dir(worktree_path)
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
 
-        // If checkout fails because the worktree is stale (e.g., gate was
+        // If reset fails because the worktree is stale (e.g., gate was
         // deleted and recreated), recover by removing and recreating it.
         // This catches cases where is_valid_worktree didn't detect staleness.
         if stderr.contains("not a git repository") {
             tracing::warn!(
-                "Persistent worktree at {} is stale (checkout failed: {}), recovering",
+                "Persistent worktree at {} is stale (reset failed: {}), recovering",
                 worktree_path.display(),
                 stderr.trim(),
             );
@@ -221,20 +223,6 @@ pub fn reset_persistent_worktree(
             return create_run_worktree(gate_path, worktree_path, head_sha);
         }
 
-        return Err(AirlockError::Git(format!(
-            "Failed to checkout {} in persistent worktree: {}",
-            head_sha, stderr
-        )));
-    }
-
-    // Reset all tracked files to match the target commit
-    let output = Command::new("git")
-        .args(["reset", "--hard", head_sha])
-        .current_dir(worktree_path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(AirlockError::Git(format!(
             "Failed to reset persistent worktree: {}",
             stderr

@@ -218,6 +218,23 @@ async fn resume_pipeline_after_approval(
         run.id, approved_step_name, approved_step_order, approved_job_key
     );
 
+    // Reload run from DB to get the latest head_sha. Between when the caller
+    // loaded the run and now, apply_patches may have updated head_sha.
+    let run = {
+        let db = ctx.db.lock().await;
+        match db.get_run(&run.id) {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                error!("Run {} no longer exists in DB", run.id);
+                return;
+            }
+            Err(e) => {
+                error!("Failed to reload run {}: {}", run.id, e);
+                return;
+            }
+        }
+    };
+
     // Load workflow configuration from the pushed commit in the gate
     let branch = extract_branch_name(&run.ref_updates);
     let workflows = match load_workflows_for_run(&repo.gate_path, &run.head_sha, branch.as_deref())
@@ -589,6 +606,49 @@ pub async fn handle_apply_patches(
             "No run worktree found — pipeline may not be running".to_string(),
         );
     };
+
+    // Defense in depth: verify worktree HEAD matches the run's head_sha.
+    // If a previous reset failed (e.g., dirty files), the worktree may be at
+    // a stale commit. Detect this and force-reset before applying patches.
+    let wt_head = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&worktree_path)
+        .output();
+    match wt_head {
+        Ok(output) if output.status.success() => {
+            let actual_head = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if actual_head != run.head_sha {
+                warn!(
+                    "Worktree HEAD ({}) does not match run head_sha ({}), resetting",
+                    actual_head, run.head_sha
+                );
+                let reset = std::process::Command::new("git")
+                    .args(["reset", "--hard", &run.head_sha])
+                    .current_dir(&worktree_path)
+                    .output();
+                if let Ok(o) = &reset {
+                    if !o.status.success() {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
+                        return Response::error(
+                            id,
+                            error_codes::GIT_ERROR,
+                            format!(
+                                "Failed to reset worktree to run head_sha {}: {}",
+                                run.head_sha, stderr
+                            ),
+                        );
+                    }
+                }
+                let _ = std::process::Command::new("git")
+                    .args(["clean", "-fd"])
+                    .current_dir(&worktree_path)
+                    .output();
+            }
+        }
+        _ => {
+            warn!("Failed to read worktree HEAD, proceeding anyway");
+        }
+    }
 
     // Configure git user in worktree
     let _ = std::process::Command::new("git")

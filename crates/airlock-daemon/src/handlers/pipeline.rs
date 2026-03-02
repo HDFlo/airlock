@@ -1052,6 +1052,24 @@ pub(super) async fn resume_dag_after_job_completion(
 ) {
     let paths = ctx.paths.clone();
 
+    // Reload run from DB to get the latest head_sha. Between when the caller
+    // loaded the run and now, apply_patches may have updated head_sha.
+    let run = {
+        let db = ctx.db.lock().await;
+        match db.get_run(&run.id) {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                error!("Run {} no longer exists in DB during DAG resume", run.id);
+                return;
+            }
+            Err(e) => {
+                error!("Failed to reload run {} during DAG resume: {}", run.id, e);
+                return;
+            }
+        }
+    };
+    let run = &run;
+
     // Build current job statuses from DB
     let mut job_statuses: HashMap<String, JobStatus> = HashMap::new();
     let mut job_id_map: HashMap<String, String> = HashMap::new();

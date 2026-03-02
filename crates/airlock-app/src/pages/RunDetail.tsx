@@ -542,7 +542,7 @@ export function RunDetail() {
             >
               {commentsCopied ? (
                 <>
-                  <Check className="mr-1.5 h-3.5 w-3.5 text-success" />
+                  <Check className="text-success mr-1.5 h-3.5 w-3.5" />
                   Copied!
                 </>
               ) : (
