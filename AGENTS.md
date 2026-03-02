@@ -4,7 +4,7 @@ This file provides guidance to AI agents when working with code in this reposito
 
 ## Project Overview
 
-Vibe code in. Clean PR out. Self-healing local CI for high-velocity agentic engineering.
+Vibe code in. Clean PR out. Airlock is where every git push turns into a slop-free PR.
 
 Airlock is a local-first CI system that transforms messy AI-generated code into clean, reviewable pull requests. It intercepts `git push` operations through a local bare repo "gate", runs a transformation pipeline, and lets users review changes before forwarding to upstream.
 

@@ -185,7 +185,7 @@ jobs:
 
             url "https://github.com/airlock-hq/airlock/releases/download/${TAG_NAME}/Airlock-${VERSION}-universal.dmg"
             name "Airlock"
-            desc "Vibe code in. Clean PR out. Self-healing local CI for high-velocity agentic engineering."
+            desc "Vibe code in. Clean PR out. Airlock is where every git push turns into a slop-free PR."
             homepage "https://github.com/airlock-hq/airlock"
 
             depends_on macos: ">= :ventura"
