@@ -25,6 +25,7 @@ import {
   CheckCircle2,
   BookOpen,
   Copy,
+  Check,
 } from 'lucide-react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useState, useCallback, useMemo, useEffect } from 'react';
@@ -85,6 +86,7 @@ export function RunDetail() {
   const [selectedPatches, setSelectedPatches] = useState<Set<string>>(new Set());
   const [artifactDataLoading, setArtifactDataLoading] = useState(false);
   const [applyingAndApproving, setApplyingAndApproving] = useState(false);
+  const [commentsCopied, setCommentsCopied] = useState(false);
 
   const handleReprocess = async () => {
     if (!runId) return;
@@ -293,6 +295,8 @@ export function RunDetail() {
     const selected = allComments.filter((c) => selectedComments.has(getCommentKey(c)));
     const markdown = selected.map((c) => `- **[${c.severity}]** \`${c.file}:${c.line}\` — ${c.message}`).join('\n');
     await navigator.clipboard.writeText(markdown);
+    setCommentsCopied(true);
+    setTimeout(() => setCommentsCopied(false), 1500);
   }, [allComments, selectedComments]);
 
   // Apply selected patches then approve
@@ -536,8 +540,17 @@ export function RunDetail() {
               disabled={selectedComments.size === 0}
               onClick={handleCopyComments}
             >
-              <Copy className="mr-1.5 h-3.5 w-3.5" />
-              Copy {selectedComments.size} {selectedComments.size === 1 ? 'comment' : 'comments'}
+              {commentsCopied ? (
+                <>
+                  <Check className="mr-1.5 h-3.5 w-3.5 text-success" />
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <Copy className="mr-1.5 h-3.5 w-3.5" />
+                  Copy {selectedComments.size} {selectedComments.size === 1 ? 'comment' : 'comments'}
+                </>
+              )}
             </Button>
 
             {selectedPendingPatchCount > 0 && (
