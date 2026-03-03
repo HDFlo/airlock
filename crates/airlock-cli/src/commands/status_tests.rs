@@ -740,21 +740,16 @@ fn test_e2e_status_works_when_daemon_not_running() {
 #[cfg(unix)]
 #[test]
 fn test_check_daemon_status_not_responding() {
-    use std::os::unix::net::UnixListener;
-
     let temp_dir = TempDir::new().unwrap();
     let paths = AirlockPaths::with_root(temp_dir.path().to_path_buf());
     paths.ensure_dirs().unwrap();
 
-    // Create a socket file but don't have anything listening on it
-    // by creating and immediately dropping the listener
+    // Create a regular file at the socket path to simulate a stale socket.
+    // This avoids a race condition with dropping a real UnixListener where
+    // the kernel may still briefly accept connections.
     let socket_path = paths.socket();
-    {
-        let _listener = UnixListener::bind(&socket_path).unwrap();
-        // Listener is dropped here, socket file remains but nothing is listening
-    }
+    std::fs::File::create(&socket_path).unwrap();
 
-    // The socket file exists but no one is listening
     assert!(socket_path.exists(), "Socket file should exist");
 
     let (daemon_running, daemon_message) = check_daemon_status(&paths);
