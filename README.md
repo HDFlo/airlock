@@ -7,7 +7,7 @@
 [![Website](https://img.shields.io/badge/web-airlockhq.com-black.svg)](https://airlockhq.com)
 [![X](https://img.shields.io/badge/follow-@Airlock__HQ-black.svg?logo=x)](https://x.com/Airlock_HQ)
 
-Vibe code in. Clean PR out. Airlock is where every git push turns into a slop-free PR.
+All slop must die. Airlock is where every git push turns into a slop-free PR.
 
 Airlock is a local Git proxy that intercepts `git push`, runs your code through a customizable validation pipeline, and lets you approve before anything is pushed to remote. Think of it as an airlock between your local repo and the outside world.
 
