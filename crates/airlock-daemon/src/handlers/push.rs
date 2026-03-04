@@ -209,16 +209,23 @@ pub async fn process_coalesced_push(
     // Load workflows from each ref's own tree to determine how to handle it.
     // Each branch may have different .airlock/workflows/ content, so we evaluate
     // workflow matches per-ref rather than using a single SHA for all refs.
-    let mut matched_updates = Vec::new();
+    struct BranchMatch {
+        update: RefUpdate,
+        workflows: Vec<(String, WorkflowConfig)>,
+    }
+
+    let mut branch_matches: Vec<BranchMatch> = Vec::new();
     let mut unmatched_updates = Vec::new();
-    let mut primary_branch_workflows: Option<Vec<(String, WorkflowConfig)>> = None;
 
     for update in pipeline_updates.drain(..) {
         let branch = match update.ref_name.strip_prefix("refs/heads/") {
             Some(b) => b,
             None => {
-                // Non-branch pipeline refs — keep in pipeline
-                matched_updates.push(update);
+                // Non-branch pipeline refs — keep in pipeline with no workflows
+                branch_matches.push(BranchMatch {
+                    update,
+                    workflows: vec![],
+                });
                 continue;
             }
         };
@@ -229,23 +236,24 @@ pub async fn process_coalesced_push(
                 if branch_workflows.is_empty() {
                     unmatched_updates.push(update);
                 } else {
-                    if primary_branch_workflows.is_none() {
-                        primary_branch_workflows = Some(branch_workflows);
-                    }
-                    matched_updates.push(update);
+                    branch_matches.push(BranchMatch {
+                        update,
+                        workflows: branch_workflows,
+                    });
                 }
             }
             Ok(_empty) => {
                 // No workflows in this ref's tree — keep in pipeline (will get error run)
-                if primary_branch_workflows.is_none() {
-                    warn!(
-                        "No workflows found at commit {} for ref {} in gate for repo {}",
-                        &update.new_sha[..8.min(update.new_sha.len())],
-                        update.ref_name,
-                        repo_id
-                    );
-                }
-                matched_updates.push(update);
+                warn!(
+                    "No workflows found at commit {} for ref {} in gate for repo {}",
+                    &update.new_sha[..8.min(update.new_sha.len())],
+                    update.ref_name,
+                    repo_id
+                );
+                branch_matches.push(BranchMatch {
+                    update,
+                    workflows: vec![],
+                });
             }
             Err(e) => {
                 warn!(
@@ -254,7 +262,10 @@ pub async fn process_coalesced_push(
                     update.ref_name,
                     e
                 );
-                matched_updates.push(update);
+                branch_matches.push(BranchMatch {
+                    update,
+                    workflows: vec![],
+                });
             }
         }
     }
@@ -291,142 +302,142 @@ pub async fn process_coalesced_push(
         }
     }
 
-    let matching_workflows = if matched_updates.is_empty() {
+    if branch_matches.is_empty() {
         // All pipeline refs were unmatched — no runs needed
         return false;
-    } else {
-        pipeline_updates = matched_updates;
-        primary_branch_workflows.unwrap_or_default()
-    };
+    }
 
-    // Extract branch, base_sha, and head_sha from (possibly filtered) pipeline_updates
-    let primary = &pipeline_updates[0];
-    let branch = primary
-        .ref_name
-        .strip_prefix("refs/heads/")
-        .unwrap_or(&primary.ref_name)
-        .to_string();
-    let base_sha = primary.old_sha.clone();
-    let head_sha = primary.new_sha.clone();
-
-    // Create a run for each matching workflow (or one run if no workflows found)
-    let workflow_runs: Vec<(Run, Option<String>)> = if matching_workflows.is_empty() {
-        // No workflows or load failed — create a single run
-        let created_at = now();
-        let run = Run {
-            id: uuid::Uuid::new_v4().to_string(),
-            repo_id: repo_id.to_string(),
-            ref_updates: pipeline_updates.clone(),
-            error: None,
-            superseded: false,
-            created_at,
-            branch: branch.clone(),
-            base_sha: base_sha.clone(),
-            head_sha: head_sha.clone(),
-            current_step: None,
-            updated_at: created_at,
-            workflow_file: String::new(),
-            workflow_name: None,
-        };
-        vec![(run, None)]
-    } else {
-        matching_workflows
-            .iter()
-            .map(|(filename, wf)| {
-                let created_at = now();
-                let run = Run {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    repo_id: repo_id.to_string(),
-                    ref_updates: pipeline_updates.clone(),
-                    error: None,
-                    superseded: false,
-                    created_at,
-                    branch: branch.clone(),
-                    base_sha: base_sha.clone(),
-                    head_sha: head_sha.clone(),
-                    current_step: None,
-                    updated_at: created_at,
-                    workflow_file: filename.clone(),
-                    workflow_name: wf.name.clone(),
-                };
-                (run, Some(filename.clone()))
-            })
-            .collect()
-    };
-
-    // Collect branch names from pipeline updates for marker cleanup
-    let pushed_branches: Vec<String> = pipeline_updates
+    // Collect branch names from all matched updates for marker cleanup
+    let pushed_branches: Vec<String> = branch_matches
         .iter()
-        .filter_map(|u| {
-            u.ref_name
+        .filter_map(|m| {
+            m.update
+                .ref_name
                 .strip_prefix("refs/heads/")
                 .map(|b| b.to_string())
         })
         .collect();
 
+    // Process each branch independently through the full run-creation path
     let mut any_run_created = false;
-    for (run, _workflow_file) in workflow_runs {
-        {
-            let db = ctx.db.lock().await;
-            if let Err(e) = db.insert_run(&run) {
-                error!("Failed to insert run: {}", e);
-                continue;
-            }
-        }
+    for branch_match in branch_matches {
+        let branch = branch_match
+            .update
+            .ref_name
+            .strip_prefix("refs/heads/")
+            .unwrap_or(&branch_match.update.ref_name)
+            .to_string();
+        let base_sha = branch_match.update.old_sha.clone();
+        let head_sha = branch_match.update.new_sha.clone();
 
-        // Auto-launch desktop app once on first successfully inserted run.
-        #[cfg(not(test))]
-        if !any_run_created {
-            if let Ok(gui_path) = airlock_core::gui::find_gui_binary() {
-                if let Err(e) = airlock_core::gui::spawn_detached(&gui_path) {
-                    debug!("Could not launch desktop app: {}", e);
+        // Create a run for each matching workflow (or one error run if no workflows found)
+        let workflow_runs: Vec<(Run, Option<String>)> = if branch_match.workflows.is_empty() {
+            let created_at = now();
+            let run = Run {
+                id: uuid::Uuid::new_v4().to_string(),
+                repo_id: repo_id.to_string(),
+                ref_updates: vec![branch_match.update],
+                error: None,
+                superseded: false,
+                created_at,
+                branch: branch.clone(),
+                base_sha: base_sha.clone(),
+                head_sha: head_sha.clone(),
+                current_step: None,
+                updated_at: created_at,
+                workflow_file: String::new(),
+                workflow_name: None,
+            };
+            vec![(run, None)]
+        } else {
+            branch_match
+                .workflows
+                .iter()
+                .map(|(filename, wf)| {
+                    let created_at = now();
+                    let run = Run {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        repo_id: repo_id.to_string(),
+                        ref_updates: vec![branch_match.update.clone()],
+                        error: None,
+                        superseded: false,
+                        created_at,
+                        branch: branch.clone(),
+                        base_sha: base_sha.clone(),
+                        head_sha: head_sha.clone(),
+                        current_step: None,
+                        updated_at: created_at,
+                        workflow_file: filename.clone(),
+                        workflow_name: wf.name.clone(),
+                    };
+                    (run, Some(filename.clone()))
+                })
+                .collect()
+        };
+
+        for (run, _workflow_file) in workflow_runs {
+            {
+                let db = ctx.db.lock().await;
+                if let Err(e) = db.insert_run(&run) {
+                    error!("Failed to insert run: {}", e);
+                    continue;
                 }
             }
-        }
 
-        any_run_created = true;
+            // Auto-launch desktop app once on first successfully inserted run.
+            #[cfg(not(test))]
+            if !any_run_created {
+                if let Ok(gui_path) = airlock_core::gui::find_gui_binary() {
+                    if let Err(e) = airlock_core::gui::spawn_detached(&gui_path) {
+                        debug!("Could not launch desktop app: {}", e);
+                    }
+                }
+            }
 
-        // Create protective ref to prevent GC of run commits
-        let protective_ref = git::run_ref(&run.id);
-        if let Err(e) = git::update_ref(&repo.gate_path, &protective_ref, &run.head_sha) {
-            warn!("Failed to create protective ref for run {}: {}", run.id, e);
-        } else {
-            debug!(
-                "Created protective ref {} -> {}",
-                protective_ref,
-                &run.head_sha[..8.min(run.head_sha.len())]
-            );
-        }
+            any_run_created = true;
 
-        info!(
-            "Created run {} for repo {} (workflow: {}) with {} ref updates",
-            run.id,
-            run.repo_id,
-            if run.workflow_file.is_empty() {
-                "default"
+            // Create protective ref to prevent GC of run commits
+            let protective_ref = git::run_ref(&run.id);
+            if let Err(e) = git::update_ref(&repo.gate_path, &protective_ref, &run.head_sha) {
+                warn!("Failed to create protective ref for run {}: {}", run.id, e);
             } else {
-                &run.workflow_file
-            },
-            run.ref_updates.len()
-        );
+                debug!(
+                    "Created protective ref {} -> {}",
+                    protective_ref,
+                    &run.head_sha[..8.min(run.head_sha.len())]
+                );
+            }
 
-        // Emit RunCreated event
-        ctx.emit(AirlockEvent::RunCreated {
-            repo_id: run.repo_id.clone(),
-            run_id: run.id.clone(),
-            branch: run.branch.clone(),
-        });
+            info!(
+                "Created run {} for repo {} (workflow: {}) with {} ref updates",
+                run.id,
+                run.repo_id,
+                if run.workflow_file.is_empty() {
+                    "default"
+                } else {
+                    &run.workflow_file
+                },
+                run.ref_updates.len()
+            );
 
-        // Spawn the pipeline through the run queue so that:
-        // 1. Only one run at a time per repo (serialized via semaphore)
-        // 2. A newer push cancels the active run for the same repo
-        let ctx = ctx.clone();
-        let repo = repo.clone();
-        tokio::spawn(async move {
-            let permit = ctx.run_queue.acquire(&run.repo_id).await;
-            execute_pipeline(ctx.clone(), run, repo, permit.token).await;
-            // permit is dropped here, releasing the slot for the next run
-        });
+            // Emit RunCreated event
+            ctx.emit(AirlockEvent::RunCreated {
+                repo_id: run.repo_id.clone(),
+                run_id: run.id.clone(),
+                branch: run.branch.clone(),
+            });
+
+            // Spawn the pipeline through the run queue so that:
+            // 1. Only one run at a time per repo (serialized via semaphore)
+            // 2. A newer push cancels the active run for the same repo
+            let ctx = ctx.clone();
+            let repo = repo.clone();
+            tokio::spawn(async move {
+                let permit = ctx.run_queue.acquire(&run.repo_id).await;
+                execute_pipeline(ctx.clone(), run, repo, permit.token).await;
+                // permit is dropped here, releasing the slot for the next run
+            });
+        }
     }
 
     // Clean up push marker refs now that runs have been created
