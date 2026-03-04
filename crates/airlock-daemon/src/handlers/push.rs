@@ -2,12 +2,12 @@
 //!
 //! Handles push notifications and push coalescing.
 
-use super::pipeline::{execute_pipeline, extract_branch_name};
+use super::pipeline::execute_pipeline;
 use super::util::now;
 use super::HandlerContext;
 use crate::ipc::AirlockEvent;
 use crate::push_coalescer;
-use airlock_core::config::{filter_workflows_for_branch, load_workflows_from_tree};
+use airlock_core::config::{filter_workflows_for_branch, load_workflows_from_tree, WorkflowConfig};
 use airlock_core::{git, RefUpdate, Repo, Run};
 use std::path::Path;
 use std::sync::Arc;
@@ -81,20 +81,8 @@ pub async fn handle_push_received(ctx: Arc<HandlerContext>, params: serde_json::
     }
 
     // Process all ready pushes
-    let mut any_runs_created = false;
     for (ready_repo_id, ready_refs) in all_ready {
-        if process_coalesced_push(ctx.clone(), &ready_repo_id, ready_refs).await {
-            any_runs_created = true;
-        }
-    }
-
-    // Auto-launch desktop app only if runs were created (best-effort, non-blocking)
-    if any_runs_created {
-        if let Ok(gui_path) = airlock_core::gui::find_gui_binary() {
-            if let Err(e) = airlock_core::gui::spawn_detached(&gui_path) {
-                debug!("Could not launch desktop app: {}", e);
-            }
-        }
+        process_coalesced_push(ctx.clone(), &ready_repo_id, ready_refs).await;
     }
 }
 
@@ -218,94 +206,98 @@ pub async fn process_coalesced_push(
         }
     }
 
-    // Load workflows from the pushed commit to determine how to handle each ref.
-    // Use the first pipeline ref's new_sha to read .airlock/workflows/ from the tree.
-    // Note: similar workflow loading exists in `load_workflows_for_run` (pipeline.rs)
-    // for re-execution; the logic here adds per-branch forwarding for unmatched refs.
-    let head_sha_for_workflows = pipeline_updates[0].new_sha.clone();
-    let matching_workflows =
-        match load_workflows_from_tree(&repo.gate_path, &head_sha_for_workflows) {
+    // Load workflows from each ref's own tree to determine how to handle it.
+    // Each branch may have different .airlock/workflows/ content, so we evaluate
+    // workflow matches per-ref rather than using a single SHA for all refs.
+    let mut matched_updates = Vec::new();
+    let mut unmatched_updates = Vec::new();
+    let mut primary_branch_workflows: Option<Vec<(String, WorkflowConfig)>> = None;
+
+    for update in pipeline_updates.drain(..) {
+        let branch = match update.ref_name.strip_prefix("refs/heads/") {
+            Some(b) => b,
+            None => {
+                // Non-branch pipeline refs — keep in pipeline
+                matched_updates.push(update);
+                continue;
+            }
+        };
+
+        match load_workflows_from_tree(&repo.gate_path, &update.new_sha) {
             Ok(all_workflows) if !all_workflows.is_empty() => {
-                // Workflows exist — check each pipeline ref against workflow triggers.
-                // Refs whose branches don't match any workflow are forwarded to upstream
-                // immediately (passthrough), so airlock is transparent for those branches.
-                let mut matched_updates = Vec::new();
-                let mut unmatched_updates = Vec::new();
-                for update in pipeline_updates.drain(..) {
-                    let has_match = update
-                        .ref_name
-                        .strip_prefix("refs/heads/")
-                        .map(|b| !filter_workflows_for_branch(all_workflows.clone(), b).is_empty())
-                        .unwrap_or(true); // Non-branch pipeline refs — keep in pipeline
-                    if has_match {
-                        matched_updates.push(update);
-                    } else {
-                        unmatched_updates.push(update);
-                    }
-                }
-
-                // Forward unmatched branches to upstream immediately
-                if !unmatched_updates.is_empty() {
-                    let unmatched_branches: Vec<String> = unmatched_updates
-                        .iter()
-                        .filter_map(|u| u.ref_name.strip_prefix("refs/heads/").map(String::from))
-                        .collect();
-                    info!(
-                        "Forwarding {} unmatched branch ref(s) to upstream for repo {}: {:?}",
-                        unmatched_updates.len(),
-                        repo_id,
-                        unmatched_branches
-                    );
-                    let refs: Vec<&RefUpdate> = unmatched_updates.iter().collect();
-                    if let Err(e) = git::push_ref_updates(&repo.gate_path, "origin", &refs) {
-                        error!(
-                            "Failed to forward unmatched branch refs to upstream: {}. \
-                             Refs are in gate but not upstream.",
-                            e
-                        );
-                    }
-                    // Clean up push markers for forwarded branches
-                    if !unmatched_branches.is_empty() {
-                        let branch_refs: Vec<&str> =
-                            unmatched_branches.iter().map(|s| s.as_str()).collect();
-                        git::cleanup_push_markers(&repo.gate_path, &branch_refs);
-                    }
-                }
-
-                if matched_updates.is_empty() {
-                    // All pipeline refs were unmatched — no runs needed
-                    return false;
-                }
-
-                pipeline_updates = matched_updates;
-
-                // Filter workflows for the primary matched branch
-                let branch_name = extract_branch_name(&pipeline_updates);
-                if let Some(ref b) = branch_name {
-                    filter_workflows_for_branch(all_workflows, b)
+                let branch_workflows = filter_workflows_for_branch(all_workflows, branch);
+                if branch_workflows.is_empty() {
+                    unmatched_updates.push(update);
                 } else {
-                    all_workflows
+                    if primary_branch_workflows.is_none() {
+                        primary_branch_workflows = Some(branch_workflows);
+                    }
+                    matched_updates.push(update);
                 }
             }
             Ok(_empty) => {
-                // No workflows found — create error run so user knows to run `airlock init`
-                warn!(
-                    "No workflows found at commit {} in gate for repo {}",
-                    &head_sha_for_workflows[..8.min(head_sha_for_workflows.len())],
-                    repo_id
-                );
-                vec![]
+                // No workflows in this ref's tree — keep in pipeline (will get error run)
+                if primary_branch_workflows.is_none() {
+                    warn!(
+                        "No workflows found at commit {} for ref {} in gate for repo {}",
+                        &update.new_sha[..8.min(update.new_sha.len())],
+                        update.ref_name,
+                        repo_id
+                    );
+                }
+                matched_updates.push(update);
             }
             Err(e) => {
-                // Failed to load (e.g. no .airlock/workflows/ dir) — create error run
                 warn!(
-                    "Failed to load workflows from commit {} in gate: {}",
-                    &head_sha_for_workflows[..8.min(head_sha_for_workflows.len())],
+                    "Failed to load workflows from commit {} for ref {}: {}",
+                    &update.new_sha[..8.min(update.new_sha.len())],
+                    update.ref_name,
                     e
                 );
-                vec![]
+                matched_updates.push(update);
             }
-        };
+        }
+    }
+
+    // Forward unmatched branches to upstream immediately
+    if !unmatched_updates.is_empty() {
+        let unmatched_branches: Vec<String> = unmatched_updates
+            .iter()
+            .filter_map(|u| u.ref_name.strip_prefix("refs/heads/").map(String::from))
+            .collect();
+        info!(
+            "Forwarding {} unmatched branch ref(s) to upstream for repo {}: {:?}",
+            unmatched_updates.len(),
+            repo_id,
+            unmatched_branches
+        );
+        let refs: Vec<&RefUpdate> = unmatched_updates.iter().collect();
+        match git::push_ref_updates(&repo.gate_path, "origin", &refs) {
+            Ok(()) => {
+                // Only clean up push markers for successfully forwarded branches
+                if !unmatched_branches.is_empty() {
+                    let branch_refs: Vec<&str> =
+                        unmatched_branches.iter().map(|s| s.as_str()).collect();
+                    git::cleanup_push_markers(&repo.gate_path, &branch_refs);
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Failed to forward unmatched branch refs to upstream: {}. \
+                     Refs are in gate but not upstream.",
+                    e
+                );
+            }
+        }
+    }
+
+    let matching_workflows = if matched_updates.is_empty() {
+        // All pipeline refs were unmatched — no runs needed
+        return false;
+    } else {
+        pipeline_updates = matched_updates;
+        primary_branch_workflows.unwrap_or_default()
+    };
 
     // Extract branch, base_sha, and head_sha from (possibly filtered) pipeline_updates
     let primary = &pipeline_updates[0];
@@ -379,6 +371,16 @@ pub async fn process_coalesced_push(
             if let Err(e) = db.insert_run(&run) {
                 error!("Failed to insert run: {}", e);
                 continue;
+            }
+        }
+
+        // Auto-launch desktop app once on first successfully inserted run.
+        #[cfg(not(test))]
+        if !any_run_created {
+            if let Ok(gui_path) = airlock_core::gui::find_gui_binary() {
+                if let Err(e) = airlock_core::gui::spawn_detached(&gui_path) {
+                    debug!("Could not launch desktop app: {}", e);
+                }
             }
         }
 
