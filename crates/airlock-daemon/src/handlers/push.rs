@@ -2,11 +2,12 @@
 //!
 //! Handles push notifications and push coalescing.
 
-use super::pipeline::{execute_pipeline, extract_branch_name, load_workflows_for_run};
+use super::pipeline::{execute_pipeline, extract_branch_name};
 use super::util::now;
 use super::HandlerContext;
 use crate::ipc::AirlockEvent;
 use crate::push_coalescer;
+use airlock_core::config::{filter_workflows_for_branch, load_workflows_from_tree};
 use airlock_core::{git, RefUpdate, Repo, Run};
 use std::path::Path;
 use std::sync::Arc;
@@ -80,14 +81,19 @@ pub async fn handle_push_received(ctx: Arc<HandlerContext>, params: serde_json::
     }
 
     // Process all ready pushes
+    let mut any_runs_created = false;
     for (ready_repo_id, ready_refs) in all_ready {
-        process_coalesced_push(ctx.clone(), &ready_repo_id, ready_refs).await;
+        if process_coalesced_push(ctx.clone(), &ready_repo_id, ready_refs).await {
+            any_runs_created = true;
+        }
     }
 
-    // Auto-launch desktop app (best-effort, non-blocking)
-    if let Ok(gui_path) = airlock_core::gui::find_gui_binary() {
-        if let Err(e) = airlock_core::gui::spawn_detached(&gui_path) {
-            debug!("Could not launch desktop app: {}", e);
+    // Auto-launch desktop app only if runs were created (best-effort, non-blocking)
+    if any_runs_created {
+        if let Ok(gui_path) = airlock_core::gui::find_gui_binary() {
+            if let Err(e) = airlock_core::gui::spawn_detached(&gui_path) {
+                debug!("Could not launch desktop app: {}", e);
+            }
         }
     }
 }
@@ -97,11 +103,14 @@ pub async fn handle_push_received(ctx: Arc<HandlerContext>, params: serde_json::
 /// This partitions refs into:
 /// - Pipeline refs (branch creates/updates) → go through transformation pipeline
 /// - Passthrough refs (tags, deletions, other) → forwarded immediately to upstream
+///
+/// Returns `true` if runs were created, `false` if the push was fully forwarded
+/// (e.g. passthrough-only or no workflow matched the branch).
 pub async fn process_coalesced_push(
     ctx: Arc<HandlerContext>,
     repo_id: &str,
     ref_updates: Vec<RefUpdate>,
-) {
+) -> bool {
     debug!(
         "Processing coalesced push for repo {} with {} refs",
         repo_id,
@@ -115,11 +124,11 @@ pub async fn process_coalesced_push(
             Ok(Some(r)) => r,
             Ok(None) => {
                 error!("Repo {} not found", repo_id);
-                return;
+                return false;
             }
             Err(e) => {
                 error!("Failed to get repo: {}", e);
-                return;
+                return false;
             }
         }
     };
@@ -136,7 +145,7 @@ pub async fn process_coalesced_push(
     // If no pipeline refs, we're done
     if pipeline_refs.is_empty() {
         info!("No pipeline refs for repo {} - passthrough only", repo_id);
-        return;
+        return false;
     }
 
     // Convert to owned refs for the run
@@ -221,20 +230,49 @@ pub async fn process_coalesced_push(
     let base_sha = primary.old_sha.clone();
     let head_sha = primary.new_sha.clone();
 
-    // Load matching workflows for this branch
+    // Load workflows and determine how to handle this push
     let branch_name = extract_branch_name(&pipeline_updates);
-    let matching_workflows =
-        match load_workflows_for_run(&repo.gate_path, &head_sha, branch_name.as_deref()) {
-            Ok(w) => w,
-            Err(e) => {
-                // Fall back to creating a single run without workflow info
-                warn!(
-                    "Failed to load workflows: {}. Creating run without workflow info.",
-                    e
-                );
-                vec![]
+    let matching_workflows = match load_workflows_from_tree(&repo.gate_path, &head_sha) {
+        Ok(all_workflows) if !all_workflows.is_empty() => {
+            // Workflows exist — filter by branch
+            if let Some(ref branch_name) = branch_name {
+                let filtered = filter_workflows_for_branch(all_workflows, branch_name);
+                if filtered.is_empty() {
+                    // Workflows exist but none match this branch — forward to upstream
+                    info!(
+                        "No workflow matched branch '{}' for repo {} — forwarding to upstream",
+                        branch_name, repo_id
+                    );
+                    let refs: Vec<&RefUpdate> = pipeline_updates.iter().collect();
+                    if let Err(e) = git::push_ref_updates(&repo.gate_path, "origin", &refs) {
+                        error!("Failed to forward unmatched branch refs to upstream: {}", e);
+                    }
+                    return false;
+                }
+                filtered
+            } else {
+                all_workflows
             }
-        };
+        }
+        Ok(_empty) => {
+            // No workflows found — create error run so user knows to run `airlock init`
+            warn!(
+                "No workflows found at commit {} in gate for repo {}",
+                &head_sha[..8.min(head_sha.len())],
+                repo_id
+            );
+            vec![]
+        }
+        Err(e) => {
+            // Failed to load (e.g. no .airlock/workflows/ dir) — create error run
+            warn!(
+                "Failed to load workflows from commit {} in gate: {}",
+                &head_sha[..8.min(head_sha.len())],
+                e
+            );
+            vec![]
+        }
+    };
 
     // Create a run for each matching workflow (or one run if no workflows found)
     let workflow_runs: Vec<(Run, Option<String>)> = if matching_workflows.is_empty() {
@@ -348,6 +386,8 @@ pub async fn process_coalesced_push(
         let branch_refs: Vec<&str> = pushed_branches.iter().map(|s| s.as_str()).collect();
         git::cleanup_push_markers(&repo.gate_path, &branch_refs);
     }
+
+    true
 }
 
 /// Forward passthrough refs directly to upstream.
