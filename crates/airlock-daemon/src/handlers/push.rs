@@ -218,10 +218,97 @@ pub async fn process_coalesced_push(
         }
     }
 
-    // Extract branch, base_sha, and head_sha from pipeline_updates
-    // Use the first ref update (all pipeline refs are branch creates/updates)
-    let primary = &pipeline_updates[0];
+    // Load workflows from the pushed commit to determine how to handle each ref.
+    // Use the first pipeline ref's new_sha to read .airlock/workflows/ from the tree.
+    // Note: similar workflow loading exists in `load_workflows_for_run` (pipeline.rs)
+    // for re-execution; the logic here adds per-branch forwarding for unmatched refs.
+    let head_sha_for_workflows = pipeline_updates[0].new_sha.clone();
+    let matching_workflows =
+        match load_workflows_from_tree(&repo.gate_path, &head_sha_for_workflows) {
+            Ok(all_workflows) if !all_workflows.is_empty() => {
+                // Workflows exist — check each pipeline ref against workflow triggers.
+                // Refs whose branches don't match any workflow are forwarded to upstream
+                // immediately (passthrough), so airlock is transparent for those branches.
+                let mut matched_updates = Vec::new();
+                let mut unmatched_updates = Vec::new();
+                for update in pipeline_updates.drain(..) {
+                    let has_match = update
+                        .ref_name
+                        .strip_prefix("refs/heads/")
+                        .map(|b| !filter_workflows_for_branch(all_workflows.clone(), b).is_empty())
+                        .unwrap_or(true); // Non-branch pipeline refs — keep in pipeline
+                    if has_match {
+                        matched_updates.push(update);
+                    } else {
+                        unmatched_updates.push(update);
+                    }
+                }
 
+                // Forward unmatched branches to upstream immediately
+                if !unmatched_updates.is_empty() {
+                    let unmatched_branches: Vec<String> = unmatched_updates
+                        .iter()
+                        .filter_map(|u| u.ref_name.strip_prefix("refs/heads/").map(String::from))
+                        .collect();
+                    info!(
+                        "Forwarding {} unmatched branch ref(s) to upstream for repo {}: {:?}",
+                        unmatched_updates.len(),
+                        repo_id,
+                        unmatched_branches
+                    );
+                    let refs: Vec<&RefUpdate> = unmatched_updates.iter().collect();
+                    if let Err(e) = git::push_ref_updates(&repo.gate_path, "origin", &refs) {
+                        error!(
+                            "Failed to forward unmatched branch refs to upstream: {}. \
+                             Refs are in gate but not upstream.",
+                            e
+                        );
+                    }
+                    // Clean up push markers for forwarded branches
+                    if !unmatched_branches.is_empty() {
+                        let branch_refs: Vec<&str> =
+                            unmatched_branches.iter().map(|s| s.as_str()).collect();
+                        git::cleanup_push_markers(&repo.gate_path, &branch_refs);
+                    }
+                }
+
+                if matched_updates.is_empty() {
+                    // All pipeline refs were unmatched — no runs needed
+                    return false;
+                }
+
+                pipeline_updates = matched_updates;
+
+                // Filter workflows for the primary matched branch
+                let branch_name = extract_branch_name(&pipeline_updates);
+                if let Some(ref b) = branch_name {
+                    filter_workflows_for_branch(all_workflows, b)
+                } else {
+                    all_workflows
+                }
+            }
+            Ok(_empty) => {
+                // No workflows found — create error run so user knows to run `airlock init`
+                warn!(
+                    "No workflows found at commit {} in gate for repo {}",
+                    &head_sha_for_workflows[..8.min(head_sha_for_workflows.len())],
+                    repo_id
+                );
+                vec![]
+            }
+            Err(e) => {
+                // Failed to load (e.g. no .airlock/workflows/ dir) — create error run
+                warn!(
+                    "Failed to load workflows from commit {} in gate: {}",
+                    &head_sha_for_workflows[..8.min(head_sha_for_workflows.len())],
+                    e
+                );
+                vec![]
+            }
+        };
+
+    // Extract branch, base_sha, and head_sha from (possibly filtered) pipeline_updates
+    let primary = &pipeline_updates[0];
     let branch = primary
         .ref_name
         .strip_prefix("refs/heads/")
@@ -229,50 +316,6 @@ pub async fn process_coalesced_push(
         .to_string();
     let base_sha = primary.old_sha.clone();
     let head_sha = primary.new_sha.clone();
-
-    // Load workflows and determine how to handle this push
-    let branch_name = extract_branch_name(&pipeline_updates);
-    let matching_workflows = match load_workflows_from_tree(&repo.gate_path, &head_sha) {
-        Ok(all_workflows) if !all_workflows.is_empty() => {
-            // Workflows exist — filter by branch
-            if let Some(ref branch_name) = branch_name {
-                let filtered = filter_workflows_for_branch(all_workflows, branch_name);
-                if filtered.is_empty() {
-                    // Workflows exist but none match this branch — forward to upstream
-                    info!(
-                        "No workflow matched branch '{}' for repo {} — forwarding to upstream",
-                        branch_name, repo_id
-                    );
-                    let refs: Vec<&RefUpdate> = pipeline_updates.iter().collect();
-                    if let Err(e) = git::push_ref_updates(&repo.gate_path, "origin", &refs) {
-                        error!("Failed to forward unmatched branch refs to upstream: {}", e);
-                    }
-                    return false;
-                }
-                filtered
-            } else {
-                all_workflows
-            }
-        }
-        Ok(_empty) => {
-            // No workflows found — create error run so user knows to run `airlock init`
-            warn!(
-                "No workflows found at commit {} in gate for repo {}",
-                &head_sha[..8.min(head_sha.len())],
-                repo_id
-            );
-            vec![]
-        }
-        Err(e) => {
-            // Failed to load (e.g. no .airlock/workflows/ dir) — create error run
-            warn!(
-                "Failed to load workflows from commit {} in gate: {}",
-                &head_sha[..8.min(head_sha.len())],
-                e
-            );
-            vec![]
-        }
-    };
 
     // Create a run for each matching workflow (or one run if no workflows found)
     let workflow_runs: Vec<(Run, Option<String>)> = if matching_workflows.is_empty() {
@@ -329,6 +372,7 @@ pub async fn process_coalesced_push(
         })
         .collect();
 
+    let mut any_run_created = false;
     for (run, _workflow_file) in workflow_runs {
         {
             let db = ctx.db.lock().await;
@@ -337,6 +381,8 @@ pub async fn process_coalesced_push(
                 continue;
             }
         }
+
+        any_run_created = true;
 
         // Create protective ref to prevent GC of run commits
         let protective_ref = git::run_ref(&run.id);
@@ -387,7 +433,7 @@ pub async fn process_coalesced_push(
         git::cleanup_push_markers(&repo.gate_path, &branch_refs);
     }
 
-    true
+    any_run_created
 }
 
 /// Forward passthrough refs directly to upstream.
