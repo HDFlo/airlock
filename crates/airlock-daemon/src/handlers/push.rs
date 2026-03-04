@@ -137,11 +137,13 @@ pub async fn process_coalesced_push(
     let mut pipeline_updates: Vec<RefUpdate> = pipeline_refs.into_iter().cloned().collect();
 
     // Supersede any overlapping active runs
+    let had_superseded;
     {
         let db = ctx.db.lock().await;
         match push_coalescer::supersede_overlapping_runs(&db, repo_id, &pipeline_updates) {
             Ok(superseded) => {
-                if !superseded.is_empty() {
+                had_superseded = !superseded.is_empty();
+                if had_superseded {
                     info!(
                         "Superseded {} overlapping run(s) for repo {}",
                         superseded.len(),
@@ -172,6 +174,7 @@ pub async fn process_coalesced_push(
                 }
             }
             Err(e) => {
+                had_superseded = false;
                 warn!("Failed to supersede overlapping runs: {}", e);
             }
         }
@@ -282,6 +285,17 @@ pub async fn process_coalesced_push(
         let refs: Vec<&RefUpdate> = unmatched_updates.iter().collect();
         match git::push_ref_updates(&repo.gate_path, "origin", &refs) {
             Ok(()) => {
+                // Update tracking refs so subsequent pushes compute correct base_sha
+                for update in &unmatched_updates {
+                    if let Some(branch) = update.ref_name.strip_prefix("refs/heads/") {
+                        let tracking_ref = format!("refs/remotes/origin/{}", branch);
+                        if let Err(e) =
+                            git::update_ref(&repo.gate_path, &tracking_ref, &update.new_sha)
+                        {
+                            warn!("Failed to update tracking ref {}: {}", tracking_ref, e);
+                        }
+                    }
+                }
                 // Only clean up push markers for successfully forwarded branches
                 if !unmatched_branches.is_empty() {
                     let branch_refs: Vec<&str> =
@@ -300,7 +314,11 @@ pub async fn process_coalesced_push(
     }
 
     if branch_matches.is_empty() {
-        // All pipeline refs were unmatched — no runs needed
+        // All pipeline refs were unmatched — no runs needed.
+        // If we superseded runs in the DB, cancel their runtime tokens too.
+        if had_superseded {
+            ctx.run_queue.cancel_active(&repo.id).await;
+        }
         return;
     }
 
@@ -442,10 +460,29 @@ pub async fn process_coalesced_push(
         let repo = repo.clone();
         tokio::spawn(async move {
             let permit = ctx.run_queue.acquire(&repo.id).await;
-            for run in all_runs {
-                execute_pipeline(ctx.clone(), run, repo.clone(), permit.token.clone()).await;
+            let mut run_idx = 0;
+            while run_idx < all_runs.len() {
+                let run = &all_runs[run_idx];
+                execute_pipeline(ctx.clone(), run.clone(), repo.clone(), permit.token.clone())
+                    .await;
+                run_idx += 1;
                 // Stop processing remaining runs if cancelled by a newer push.
                 if permit.token.is_cancelled() {
+                    // Mark remaining runs as superseded so they don't stay pending forever
+                    {
+                        let db = ctx.db.lock().await;
+                        for remaining in &all_runs[run_idx..] {
+                            let _ = db.mark_run_superseded(&remaining.id);
+                        }
+                    }
+                    for remaining in &all_runs[run_idx..] {
+                        ctx.emit(AirlockEvent::RunCompleted {
+                            repo_id: remaining.repo_id.clone(),
+                            run_id: remaining.id.clone(),
+                            success: false,
+                            branch: remaining.branch.clone(),
+                        });
+                    }
                     break;
                 }
             }

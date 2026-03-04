@@ -51,6 +51,20 @@ impl RunQueue {
         Self::default()
     }
 
+    /// Cancel the active run for `repo_id` without acquiring a new slot.
+    ///
+    /// Used when superseded runs need their tokens cancelled but no new
+    /// pipeline run will be started (e.g., all refs were forwarded directly).
+    pub async fn cancel_active(&self, repo_id: &str) {
+        let mut slots = self.slots.lock().await;
+        if let Some(slot) = slots.get_mut(repo_id) {
+            if let Some(prev) = slot.active_token.take() {
+                tracing::info!("Cancelling active run for repo {}", repo_id);
+                prev.cancel();
+            }
+        }
+    }
+
     /// Acquire the run slot for `repo_id`.
     ///
     /// If another run is active for this repo, its cancellation token is
@@ -191,5 +205,35 @@ mod tests {
 
         h1.await.unwrap();
         h2.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_cancel_active_without_acquire() {
+        let queue = Arc::new(RunQueue::new());
+
+        // Acquire a slot and hold it
+        let q = queue.clone();
+        let h1 = tokio::spawn(async move {
+            let permit = q.acquire("repo-1").await;
+            // Wait for cancellation
+            loop {
+                if permit.token.is_cancelled() {
+                    break;
+                }
+                sleep(Duration::from_millis(5)).await;
+            }
+            assert!(permit.token.is_cancelled());
+        });
+
+        // Give h1 time to acquire
+        sleep(Duration::from_millis(10)).await;
+
+        // cancel_active should cancel h1's token without acquiring
+        queue.cancel_active("repo-1").await;
+
+        h1.await.unwrap();
+
+        // cancel_active on a non-existent repo should be a no-op
+        queue.cancel_active("repo-nonexistent").await;
     }
 }
