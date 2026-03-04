@@ -33,6 +33,42 @@ pub fn push(repo_path: &Path, remote_name: &str, refspecs: &[&str]) -> Result<()
     Ok(())
 }
 
+/// Push refs to a remote using `--force-with-lease` for safe force-push.
+///
+/// This is used after rebase rewrites history: the upstream ref is no longer an
+/// ancestor of the new HEAD, but we know exactly what it should be (the value we
+/// just fetched). `--force-with-lease=<ref>:<expected>` tells the server to reject
+/// the push if someone else updated the ref in the meantime.
+pub fn push_force_with_lease(
+    repo_path: &Path,
+    remote_name: &str,
+    refspecs: &[&str],
+    lease_ref: &str,
+    expected_sha: &str,
+) -> Result<()> {
+    if refspecs.is_empty() {
+        return Ok(());
+    }
+
+    let lease_arg = format!("--force-with-lease={}:{}", lease_ref, expected_sha);
+
+    tracing::debug!(
+        "Force-pushing {:?} to '{}' with lease {}={} in {}",
+        refspecs,
+        remote_name,
+        lease_ref,
+        &expected_sha[..8.min(expected_sha.len())],
+        repo_path.display()
+    );
+
+    let mut args: Vec<&str> = vec!["push", &lease_arg, remote_name];
+    args.extend_from_slice(refspecs);
+    run_git(repo_path, &args, "push --force-with-lease")?;
+
+    tracing::debug!("Force-pushed to remote '{}'", remote_name);
+    Ok(())
+}
+
 /// Push a single branch to a remote using git CLI.
 pub fn push_branch(repo_path: &Path, remote_name: &str, branch_name: &str) -> Result<()> {
     let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);

@@ -62,8 +62,6 @@ pub async fn push() -> Result<()> {
     let artifacts_dir = PathBuf::from(std::env::var("AIRLOCK_ARTIFACTS").context(
         "AIRLOCK_ARTIFACTS environment variable not set. This command must be run within a pipeline stage.",
     )?);
-    let repo_root = std::env::var("AIRLOCK_REPO_ROOT").unwrap_or_default();
-
     // Extract branch name from full ref (e.g., "refs/heads/feature/xyz" -> "feature/xyz")
     let branch = branch_ref
         .strip_prefix("refs/heads/")
@@ -97,7 +95,7 @@ pub async fn push() -> Result<()> {
     debug!("Upstream HEAD: {:?}", upstream_head);
 
     // 4. Check for divergence (if upstream ref exists)
-    if let Some(ref upstream_sha) = upstream_head {
+    let force_with_lease = if let Some(ref upstream_sha) = upstream_head {
         debug!(
             "Checking ancestry: {} -> {}",
             &upstream_sha[..8.min(upstream_sha.len())],
@@ -111,33 +109,17 @@ pub async fn push() -> Result<()> {
             .context("Failed to check commit ancestry")?;
 
         if !is_ancestor {
-            let msg = format!(
-                "Push failed: upstream has commits not in your working copy.\n\n\
-                 To resolve in your working repo:\n  \
-                 cd {}\n  \
-                 git fetch origin\n  \
-                 git rebase origin/{}\n  \
-                 git push origin {}",
-                if repo_root.is_empty() {
-                    "<your-repo>"
-                } else {
-                    &repo_root
-                },
-                branch,
-                branch
+            info!(
+                "History diverged from upstream (e.g. after rebase). \
+                 Will use --force-with-lease to push safely."
             );
-            write_push_result(
-                &artifacts_dir,
-                false,
-                branch,
-                &worktree_head,
-                &upstream_url,
-                &ref_name,
-                &msg,
-            )?;
-            anyhow::bail!("{}", msg);
+            true
+        } else {
+            false
         }
-    }
+    } else {
+        false
+    };
 
     // 5. Transfer worktree HEAD objects to gate (freeze may have created new commits)
     let worktree_str = worktree
@@ -159,7 +141,15 @@ pub async fn push() -> Result<()> {
 
     // 7. Push gate to upstream
     let refspec = format!("{}:{}", ref_name, ref_name);
-    match git::push(&gate_path, "origin", &[&refspec]) {
+    let push_result = if force_with_lease {
+        let upstream_sha = upstream_head
+            .as_ref()
+            .expect("force_with_lease implies upstream exists");
+        git::push_force_with_lease(&gate_path, "origin", &[&refspec], &ref_name, upstream_sha)
+    } else {
+        git::push(&gate_path, "origin", &[&refspec])
+    };
+    match push_result {
         Ok(()) => {
             println!("Successfully pushed to {}", upstream_url);
 
@@ -192,7 +182,16 @@ pub async fn push() -> Result<()> {
                 let _ = git::update_ref(&gate_path, &ref_name, original);
             }
 
-            let error_msg = format!("Push failed: {}", e);
+            let error_msg = if force_with_lease {
+                format!(
+                    "Push failed: --force-with-lease rejected (upstream changed since fetch).\n\
+                     Someone else pushed to {} while the pipeline was running.\n\
+                     Original error: {}",
+                    branch, e
+                )
+            } else {
+                format!("Push failed: {}", e)
+            };
             println!("{}", error_msg);
 
             write_push_result(
@@ -205,7 +204,7 @@ pub async fn push() -> Result<()> {
                 &error_msg,
             )?;
 
-            return Err(e.into());
+            anyhow::bail!("{}", error_msg);
         }
     }
 
@@ -505,17 +504,78 @@ mod tests {
         clear_push_env();
     }
 
-    /// When upstream has diverged (someone pushed while pipeline ran), push must
-    /// fail with a clear message instead of silently clobbering.
+    /// After rebase rewrites history (worktree HEAD is not a descendant of
+    /// upstream), push should succeed via --force-with-lease.
     #[tokio::test]
     #[serial]
-    async fn test_push_fails_on_upstream_divergence() {
+    async fn test_push_succeeds_after_rebase_rewrite() {
         let temp_dir = TempDir::new().unwrap();
         let (upstream_path, gate_path, worktree_path, work_path) = setup_push_topology(&temp_dir);
 
-        // Simulate another user pushing a commit to upstream while our pipeline runs.
-        // Push directly to the bare upstream repo from the work repo.
-        std::fs::write(work_path.join("other.txt"), "other change\n").unwrap();
+        // Simulate rebase rewriting history: create a NEW commit in worktree that
+        // is NOT a descendant of the current upstream HEAD (orphan-style).
+        // We do this by amending the initial commit, which changes its SHA.
+        std::fs::write(worktree_path.join("file.txt"), "rewritten by rebase\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&worktree_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "--amend", "-m", "initial (rebased)"])
+            .current_dir(&worktree_path)
+            .output()
+            .unwrap();
+
+        let worktree_head = get_head(&worktree_path);
+
+        let artifacts_dir = temp_dir.path().join("artifacts");
+        std::fs::create_dir_all(&artifacts_dir).unwrap();
+        set_push_env(
+            &upstream_path,
+            &gate_path,
+            &worktree_path,
+            &work_path,
+            &artifacts_dir,
+        );
+
+        // Push should succeed via force-with-lease
+        push()
+            .await
+            .expect("Push should succeed after rebase rewrite");
+
+        // Upstream should now match the rewritten worktree HEAD
+        let upstream_head = get_head(&upstream_path);
+        assert_eq!(
+            upstream_head, worktree_head,
+            "Upstream should match rewritten worktree HEAD"
+        );
+
+        // push_result.json should record success
+        let result: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(artifacts_dir.join("push_result.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["commit_sha"], worktree_head);
+
+        clear_push_env();
+    }
+
+    /// When upstream moves AFTER the gate's fetch (race condition), force-with-lease
+    /// should reject the push. We simulate this by giving the gate a stale tracking
+    /// ref that doesn't match what upstream actually has.
+    #[tokio::test]
+    #[serial]
+    async fn test_push_fails_when_lease_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let (upstream_path, gate_path, worktree_path, work_path) = setup_push_topology(&temp_dir);
+
+        // Record the initial upstream SHA before any concurrent changes
+        let initial_upstream = get_head(&upstream_path);
+
+        // Someone pushes a concurrent commit to upstream
+        std::fs::write(work_path.join("other.txt"), "concurrent\n").unwrap();
         Command::new("git")
             .args(["add", "."])
             .current_dir(&work_path)
@@ -532,54 +592,41 @@ mod tests {
             .output()
             .unwrap();
 
-        // Our worktree still has the old HEAD (no rebase), plus a freeze commit
-        std::fs::write(worktree_path.join("fix.txt"), "auto-fix\n").unwrap();
+        // Rewrite worktree history (simulate rebase)
+        std::fs::write(worktree_path.join("file.txt"), "rebased\n").unwrap();
         Command::new("git")
             .args(["add", "."])
             .current_dir(&worktree_path)
             .output()
             .unwrap();
         Command::new("git")
-            .args(["commit", "-m", "Airlock: auto-fix"])
+            .args(["commit", "--amend", "-m", "rebased"])
             .current_dir(&worktree_path)
             .output()
             .unwrap();
+        let worktree_head = get_head(&worktree_path);
 
-        let artifacts_dir = temp_dir.path().join("artifacts");
-        std::fs::create_dir_all(&artifacts_dir).unwrap();
-        set_push_env(
-            &upstream_path,
+        // Transfer worktree objects to gate so it can push them
+        let worktree_str = worktree_path.to_str().unwrap();
+        let refspec = format!("{}:refs/airlock/staging", worktree_head);
+        git::fetch_with_refspecs(&gate_path, worktree_str, &[&refspec]).unwrap();
+        git::update_ref(&gate_path, "refs/heads/main", &worktree_head).unwrap();
+
+        // Now try force-with-lease with the STALE initial SHA.
+        // Upstream has moved (concurrent commit), so the lease should fail.
+        let push_refspec = "refs/heads/main:refs/heads/main";
+        let result = git::push_force_with_lease(
             &gate_path,
-            &worktree_path,
-            &work_path,
-            &artifacts_dir,
+            "origin",
+            &[push_refspec],
+            "refs/heads/main",
+            &initial_upstream,
         );
 
-        // Push should fail with divergence error
-        let result = push().await;
         assert!(
             result.is_err(),
-            "Push should fail when upstream has diverged"
+            "Push should fail when lease SHA doesn't match upstream"
         );
-
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("upstream has commits not in your working copy"),
-            "Error should explain divergence, got: {}",
-            err_msg
-        );
-        assert!(
-            err_msg.contains("git rebase origin/main"),
-            "Error should tell user how to fix, got: {}",
-            err_msg
-        );
-
-        // push_result.json should record failure
-        let result: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(artifacts_dir.join("push_result.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(result["success"], false);
 
         clear_push_env();
     }

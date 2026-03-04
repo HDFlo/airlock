@@ -33,7 +33,9 @@ pub use hooks::{
     configure_upload_pack, install_hooks, install_upload_pack_wrapper, pre_receive_hook,
     remove_hooks, POST_RECEIVE, UPLOAD_PACK_WRAPPER,
 };
-pub use push::{build_refspec, push, push_all_branches, push_branch, push_ref_updates};
+pub use push::{
+    build_refspec, push, push_all_branches, push_branch, push_force_with_lease, push_ref_updates,
+};
 pub use refs::{
     classify_ref, cleanup_push_markers, delete_ref, get_ref_update_type, is_ancestor_of,
     is_null_sha, is_pipeline_ref, list_push_markers, parse_ref_updates, push_marker_ref,
