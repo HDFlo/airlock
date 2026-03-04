@@ -91,14 +91,11 @@ pub async fn handle_push_received(ctx: Arc<HandlerContext>, params: serde_json::
 /// This partitions refs into:
 /// - Pipeline refs (branch creates/updates) → go through transformation pipeline
 /// - Passthrough refs (tags, deletions, other) → forwarded immediately to upstream
-///
-/// Returns `true` if runs were created, `false` if the push was fully forwarded
-/// (e.g. passthrough-only or no workflow matched the branch).
 pub async fn process_coalesced_push(
     ctx: Arc<HandlerContext>,
     repo_id: &str,
     ref_updates: Vec<RefUpdate>,
-) -> bool {
+) {
     debug!(
         "Processing coalesced push for repo {} with {} refs",
         repo_id,
@@ -112,11 +109,11 @@ pub async fn process_coalesced_push(
             Ok(Some(r)) => r,
             Ok(None) => {
                 error!("Repo {} not found", repo_id);
-                return false;
+                return;
             }
             Err(e) => {
                 error!("Failed to get repo: {}", e);
-                return false;
+                return;
             }
         }
     };
@@ -133,7 +130,7 @@ pub async fn process_coalesced_push(
     // If no pipeline refs, we're done
     if pipeline_refs.is_empty() {
         info!("No pipeline refs for repo {} - passthrough only", repo_id);
-        return false;
+        return;
     }
 
     // Convert to owned refs for the run
@@ -304,7 +301,7 @@ pub async fn process_coalesced_push(
 
     if branch_matches.is_empty() {
         // All pipeline refs were unmatched — no runs needed
-        return false;
+        return;
     }
 
     // Collect branch names from all matched updates for marker cleanup
@@ -318,8 +315,17 @@ pub async fn process_coalesced_push(
         })
         .collect();
 
-    // Process each branch independently through the full run-creation path
-    let mut any_run_created = false;
+    // Track whether we launched the desktop app (only need to do it once).
+    #[cfg(not(test))]
+    let mut gui_launched = false;
+
+    // Create all runs up front (across all branches and workflows), then spawn
+    // a single task that acquires the repo-level run queue slot and executes
+    // them sequentially. This ensures:
+    // - Only one pipeline at a time per repo (persistent worktree is shared)
+    // - A later push cancels the active run via the run queue
+    // - Multiple runs from the same push never cancel each other
+    let mut all_runs: Vec<Run> = Vec::new();
     for branch_match in branch_matches {
         let branch = branch_match
             .update
@@ -331,7 +337,7 @@ pub async fn process_coalesced_push(
         let head_sha = branch_match.update.new_sha.clone();
 
         // Create a run for each matching workflow (or one error run if no workflows found)
-        let workflow_runs: Vec<(Run, Option<String>)> = if branch_match.workflows.is_empty() {
+        let workflow_runs: Vec<Run> = if branch_match.workflows.is_empty() {
             let created_at = now();
             let run = Run {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -348,14 +354,14 @@ pub async fn process_coalesced_push(
                 workflow_file: String::new(),
                 workflow_name: None,
             };
-            vec![(run, None)]
+            vec![run]
         } else {
             branch_match
                 .workflows
                 .iter()
                 .map(|(filename, wf)| {
                     let created_at = now();
-                    let run = Run {
+                    Run {
                         id: uuid::Uuid::new_v4().to_string(),
                         repo_id: repo_id.to_string(),
                         ref_updates: vec![branch_match.update.clone()],
@@ -369,13 +375,12 @@ pub async fn process_coalesced_push(
                         updated_at: created_at,
                         workflow_file: filename.clone(),
                         workflow_name: wf.name.clone(),
-                    };
-                    (run, Some(filename.clone()))
+                    }
                 })
                 .collect()
         };
 
-        for (run, _workflow_file) in workflow_runs {
+        for run in workflow_runs {
             {
                 let db = ctx.db.lock().await;
                 if let Err(e) = db.insert_run(&run) {
@@ -386,15 +391,14 @@ pub async fn process_coalesced_push(
 
             // Auto-launch desktop app once on first successfully inserted run.
             #[cfg(not(test))]
-            if !any_run_created {
+            if !gui_launched {
+                gui_launched = true;
                 if let Ok(gui_path) = airlock_core::gui::find_gui_binary() {
                     if let Err(e) = airlock_core::gui::spawn_detached(&gui_path) {
                         debug!("Could not launch desktop app: {}", e);
                     }
                 }
             }
-
-            any_run_created = true;
 
             // Create protective ref to prevent GC of run commits
             let protective_ref = git::run_ref(&run.id);
@@ -427,17 +431,26 @@ pub async fn process_coalesced_push(
                 branch: run.branch.clone(),
             });
 
-            // Spawn the pipeline through the run queue so that:
-            // 1. Only one run at a time per repo (serialized via semaphore)
-            // 2. A newer push cancels the active run for the same repo
-            let ctx = ctx.clone();
-            let repo = repo.clone();
-            tokio::spawn(async move {
-                let permit = ctx.run_queue.acquire(&run.repo_id).await;
-                execute_pipeline(ctx.clone(), run, repo, permit.token).await;
-                // permit is dropped here, releasing the slot for the next run
-            });
+            all_runs.push(run);
         }
+    }
+
+    // Spawn a single task for the entire push that acquires the repo slot
+    // once and executes all runs sequentially under that permit.
+    if !all_runs.is_empty() {
+        let ctx = ctx.clone();
+        let repo = repo.clone();
+        tokio::spawn(async move {
+            let permit = ctx.run_queue.acquire(&repo.id).await;
+            for run in all_runs {
+                execute_pipeline(ctx.clone(), run, repo.clone(), permit.token.clone()).await;
+                // Stop processing remaining runs if cancelled by a newer push.
+                if permit.token.is_cancelled() {
+                    break;
+                }
+            }
+            // permit is dropped here, releasing the slot for the next push
+        });
     }
 
     // Clean up push marker refs now that runs have been created
@@ -445,8 +458,6 @@ pub async fn process_coalesced_push(
         let branch_refs: Vec<&str> = pushed_branches.iter().map(|s| s.as_str()).collect();
         git::cleanup_push_markers(&repo.gate_path, &branch_refs);
     }
-
-    any_run_created
 }
 
 /// Forward passthrough refs directly to upstream.
