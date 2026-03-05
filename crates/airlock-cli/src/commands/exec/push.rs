@@ -11,8 +11,10 @@
 //! 2. Sync gate from upstream: `git fetch origin` (in gate)
 //! 3. Get upstream HEAD from gate's remote tracking ref
 //! 4. Check: is upstream HEAD an ancestor of worktree HEAD?
-//!    YES → update gate ref, push gate to upstream, write artifacts
-//!    NO  → fail with clear message + instructions for user
+//!    YES → regular push (fast-forward)
+//!    NO  → check rebase_state.json from rebase stage:
+//!      - If rebase recorded the same upstream SHA → force-with-lease (safe)
+//!      - If upstream moved since rebase, or no rebase state → hard failure
 //!
 //! Usage:
 //!   airlock exec push
@@ -20,11 +22,19 @@
 use airlock_core::git;
 use airlock_core::AirlockPaths;
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 use crate::commands::ipc_client;
+
+/// State written by the rebase stage (`rebase_state.json`) so push can verify
+/// that upstream hasn't moved between rebase and push.
+#[derive(Debug, Deserialize)]
+struct RebaseState {
+    /// The SHA of `origin/<branch>` at the time the rebase stage fetched.
+    upstream_sha: String,
+}
 
 /// Push result artifact written to `$AIRLOCK_ARTIFACTS/push_result.json`.
 #[derive(Debug, Serialize)]
@@ -95,7 +105,13 @@ pub async fn push() -> Result<()> {
     debug!("Upstream HEAD: {:?}", upstream_head);
 
     // 4. Check for divergence (if upstream ref exists)
-    let force_with_lease = if let Some(ref upstream_sha) = upstream_head {
+    //
+    // If the worktree HEAD isn't descended from upstream (e.g. after rebase
+    // rewrote history), we need force-with-lease. We use the SHA that the
+    // rebase stage recorded — NOT the freshly-fetched upstream — as the
+    // lease expected value. This way force-with-lease guards the full
+    // rebase→push window, not just the narrow fetch→push window.
+    let lease_sha: Option<String> = if let Some(ref upstream_sha) = upstream_head {
         debug!(
             "Checking ancestry: {} -> {}",
             &upstream_sha[..8.min(upstream_sha.len())],
@@ -109,16 +125,20 @@ pub async fn push() -> Result<()> {
             .context("Failed to check commit ancestry")?;
 
         if !is_ancestor {
+            // History diverged. Only force-push if the rebase stage ran and
+            // upstream hasn't moved since it fetched. This prevents silently
+            // overwriting concurrent pushes that landed between rebase and push.
+            let rebase_sha = validate_rebase_state(&artifacts_dir, upstream_sha, branch)?;
             info!(
-                "History diverged from upstream (e.g. after rebase). \
+                "Upstream unchanged since rebase. \
                  Will use --force-with-lease to push safely."
             );
-            true
+            Some(rebase_sha)
         } else {
-            false
+            None
         }
     } else {
-        false
+        None
     };
 
     // 5. Transfer worktree HEAD objects to gate (freeze may have created new commits)
@@ -141,11 +161,8 @@ pub async fn push() -> Result<()> {
 
     // 7. Push gate to upstream
     let refspec = format!("{}:{}", ref_name, ref_name);
-    let push_result = if force_with_lease {
-        let upstream_sha = upstream_head
-            .as_ref()
-            .expect("force_with_lease implies upstream exists");
-        git::push_force_with_lease(&gate_path, "origin", &[&refspec], &ref_name, upstream_sha)
+    let push_result = if let Some(ref expected_sha) = lease_sha {
+        git::push_force_with_lease(&gate_path, "origin", &[&refspec], &ref_name, expected_sha)
     } else {
         git::push(&gate_path, "origin", &[&refspec])
     };
@@ -182,16 +199,15 @@ pub async fn push() -> Result<()> {
                 let _ = git::update_ref(&gate_path, &ref_name, original);
             }
 
-            let error_msg = if force_with_lease {
-                format!(
-                    "Push failed: --force-with-lease rejected (upstream changed since fetch).\n\
-                     Someone else pushed to {} while the pipeline was running.\n\
-                     Original error: {}",
-                    branch, e
-                )
-            } else {
-                format!("Push failed: {}", e)
-            };
+            let error_msg = format!(
+                "Push failed{}: {}",
+                if lease_sha.is_some() {
+                    " (with --force-with-lease)"
+                } else {
+                    ""
+                },
+                e
+            );
             println!("{}", error_msg);
 
             write_push_result(
@@ -245,6 +261,50 @@ async fn notify_mark_forwarded(ref_name: &str, sha: &str) {
             warn!("Failed to send mark_forwarded to daemon: {}", e);
         }
     }
+}
+
+/// Check that force-pushing is safe by comparing current upstream with what the
+/// rebase stage recorded. Returns the rebase-time upstream SHA (for use as the
+/// force-with-lease expected value) on success, or bails with a clear error if
+/// upstream moved or no rebase state exists.
+fn validate_rebase_state(
+    artifacts_dir: &Path,
+    current_upstream_sha: &str,
+    branch: &str,
+) -> Result<String> {
+    let state_path = artifacts_dir.join("rebase_state.json");
+
+    let state_json = match std::fs::read_to_string(&state_path) {
+        Ok(json) => json,
+        Err(_) => {
+            anyhow::bail!(
+                "Push rejected: history has diverged from upstream but no rebase state found.\n\
+                 The rebase stage must run before push to handle diverged history safely."
+            );
+        }
+    };
+
+    let state: RebaseState =
+        serde_json::from_str(&state_json).context("Failed to parse rebase_state.json")?;
+
+    if state.upstream_sha != current_upstream_sha {
+        anyhow::bail!(
+            "Push rejected: upstream '{}' changed since the rebase stage ran.\n\
+             Rebase saw: {}\n\
+             Upstream now: {}\n\n\
+             Someone pushed to this branch while the pipeline was running.\n\
+             The push has been aborted to avoid overwriting their changes.",
+            branch,
+            &state.upstream_sha[..12.min(state.upstream_sha.len())],
+            &current_upstream_sha[..12.min(current_upstream_sha.len())]
+        );
+    }
+
+    debug!(
+        "Rebase state validated: upstream {} unchanged since rebase",
+        &current_upstream_sha[..8.min(current_upstream_sha.len())]
+    );
+    Ok(state.upstream_sha)
 }
 
 /// Write `push_result.json` to the artifacts directory.
@@ -504,13 +564,24 @@ mod tests {
         clear_push_env();
     }
 
+    /// Write a rebase_state.json artifact with the given upstream SHA.
+    fn write_rebase_state(artifacts_dir: &Path, upstream_sha: &str) {
+        std::fs::create_dir_all(artifacts_dir).unwrap();
+        let state = format!(r#"{{"upstream_sha":"{}"}}"#, upstream_sha);
+        std::fs::write(artifacts_dir.join("rebase_state.json"), state).unwrap();
+    }
+
     /// After rebase rewrites history (worktree HEAD is not a descendant of
-    /// upstream), push should succeed via --force-with-lease.
+    /// upstream), push should succeed via --force-with-lease when rebase_state
+    /// confirms upstream hasn't moved.
     #[tokio::test]
     #[serial]
     async fn test_push_succeeds_after_rebase_rewrite() {
         let temp_dir = TempDir::new().unwrap();
         let (upstream_path, gate_path, worktree_path, work_path) = setup_push_topology(&temp_dir);
+
+        // Record upstream SHA (what rebase would have seen after fetching)
+        let upstream_sha_at_rebase = get_head(&upstream_path);
 
         // Simulate rebase rewriting history: create a NEW commit in worktree that
         // is NOT a descendant of the current upstream HEAD (orphan-style).
@@ -530,7 +601,7 @@ mod tests {
         let worktree_head = get_head(&worktree_path);
 
         let artifacts_dir = temp_dir.path().join("artifacts");
-        std::fs::create_dir_all(&artifacts_dir).unwrap();
+        write_rebase_state(&artifacts_dir, &upstream_sha_at_rebase);
         set_push_env(
             &upstream_path,
             &gate_path,
@@ -562,19 +633,18 @@ mod tests {
         clear_push_env();
     }
 
-    /// When upstream moves AFTER the gate's fetch (race condition), force-with-lease
-    /// should reject the push. We simulate this by giving the gate a stale tracking
-    /// ref that doesn't match what upstream actually has.
+    /// When someone pushes to upstream after rebase ran, push must fail because
+    /// the rebase_state.json SHA won't match the current upstream.
     #[tokio::test]
     #[serial]
-    async fn test_push_fails_when_lease_rejected() {
+    async fn test_push_fails_when_upstream_moved_since_rebase() {
         let temp_dir = TempDir::new().unwrap();
         let (upstream_path, gate_path, worktree_path, work_path) = setup_push_topology(&temp_dir);
 
-        // Record the initial upstream SHA before any concurrent changes
-        let initial_upstream = get_head(&upstream_path);
+        // Record the upstream SHA that rebase would have seen
+        let upstream_sha_at_rebase = get_head(&upstream_path);
 
-        // Someone pushes a concurrent commit to upstream
+        // Someone pushes a concurrent commit to upstream AFTER rebase ran
         std::fs::write(work_path.join("other.txt"), "concurrent\n").unwrap();
         Command::new("git")
             .args(["add", "."])
@@ -592,7 +662,7 @@ mod tests {
             .output()
             .unwrap();
 
-        // Rewrite worktree history (simulate rebase)
+        // Rewrite worktree history (simulate rebase on old upstream)
         std::fs::write(worktree_path.join("file.txt"), "rebased\n").unwrap();
         Command::new("git")
             .args(["add", "."])
@@ -604,28 +674,75 @@ mod tests {
             .current_dir(&worktree_path)
             .output()
             .unwrap();
-        let worktree_head = get_head(&worktree_path);
 
-        // Transfer worktree objects to gate so it can push them
-        let worktree_str = worktree_path.to_str().unwrap();
-        let refspec = format!("{}:refs/airlock/staging", worktree_head);
-        git::fetch_with_refspecs(&gate_path, worktree_str, &[&refspec]).unwrap();
-        git::update_ref(&gate_path, "refs/heads/main", &worktree_head).unwrap();
-
-        // Now try force-with-lease with the STALE initial SHA.
-        // Upstream has moved (concurrent commit), so the lease should fail.
-        let push_refspec = "refs/heads/main:refs/heads/main";
-        let result = git::push_force_with_lease(
+        let artifacts_dir = temp_dir.path().join("artifacts");
+        // rebase_state records the OLD upstream SHA (before concurrent push)
+        write_rebase_state(&artifacts_dir, &upstream_sha_at_rebase);
+        set_push_env(
+            &upstream_path,
             &gate_path,
-            "origin",
-            &[push_refspec],
-            "refs/heads/main",
-            &initial_upstream,
+            &worktree_path,
+            &work_path,
+            &artifacts_dir,
         );
 
+        // Push should fail: upstream moved since rebase
+        let result = push().await;
         assert!(
             result.is_err(),
-            "Push should fail when lease SHA doesn't match upstream"
+            "Push should fail when upstream moved since rebase"
+        );
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("changed since the rebase stage ran"),
+            "Error should explain upstream moved, got: {}",
+            err_msg
+        );
+
+        clear_push_env();
+    }
+
+    /// When history diverges but no rebase_state.json exists, push must fail
+    /// with a clear message about missing rebase state.
+    #[tokio::test]
+    #[serial]
+    async fn test_push_fails_on_divergence_without_rebase_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let (upstream_path, gate_path, worktree_path, work_path) = setup_push_topology(&temp_dir);
+
+        // Rewrite worktree history without writing rebase_state.json
+        std::fs::write(worktree_path.join("file.txt"), "diverged\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&worktree_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "--amend", "-m", "diverged"])
+            .current_dir(&worktree_path)
+            .output()
+            .unwrap();
+
+        let artifacts_dir = temp_dir.path().join("artifacts");
+        std::fs::create_dir_all(&artifacts_dir).unwrap();
+        // Deliberately NOT writing rebase_state.json
+        set_push_env(
+            &upstream_path,
+            &gate_path,
+            &worktree_path,
+            &work_path,
+            &artifacts_dir,
+        );
+
+        let result = push().await;
+        assert!(result.is_err(), "Push should fail without rebase state");
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("no rebase state found"),
+            "Error should explain missing rebase state, got: {}",
+            err_msg
         );
 
         clear_push_env();

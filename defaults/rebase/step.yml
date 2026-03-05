@@ -111,6 +111,16 @@ run: |
   UPSTREAM_REF="origin/${BRANCH}"
   DEFAULT_REF="origin/${DEFAULT_BRANCH}"
 
+  # Record the upstream SHA at fetch time so the push stage can verify
+  # that upstream hasn't moved between rebase and push. Without this,
+  # force-with-lease after rebase could silently overwrite concurrent pushes.
+  mkdir -p "$AIRLOCK_ARTIFACTS"
+  if git rev-parse --verify "$UPSTREAM_REF" >/dev/null 2>&1; then
+    REBASE_UPSTREAM_SHA=$(git rev-parse "$UPSTREAM_REF")
+    printf '{"upstream_sha":"%s"}\n' "$REBASE_UPSTREAM_SHA" > "$AIRLOCK_ARTIFACTS/rebase_state.json"
+    echo "Recorded upstream state: ${UPSTREAM_REF} = ${REBASE_UPSTREAM_SHA:0:12}"
+  fi
+
   # ==========================================
   # Phase 1: Sync with same-branch upstream
   # ==========================================

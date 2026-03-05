@@ -218,17 +218,12 @@ pub async fn process_coalesced_push(
     let mut unmatched_updates = Vec::new();
 
     for update in pipeline_updates.drain(..) {
-        let branch = match update.ref_name.strip_prefix("refs/heads/") {
-            Some(b) => b,
-            None => {
-                // Non-branch pipeline refs — keep in pipeline with no workflows
-                branch_matches.push(BranchMatch {
-                    update,
-                    workflows: vec![],
-                });
-                continue;
-            }
-        };
+        // pipeline_updates was filtered by is_pipeline_ref, which only accepts
+        // refs/heads/* (BranchUpdate), so strip_prefix always succeeds.
+        let branch = update
+            .ref_name
+            .strip_prefix("refs/heads/")
+            .expect("pipeline_updates only contains refs/heads/* refs");
 
         match load_workflows_from_tree(&repo.gate_path, &update.new_sha) {
             Ok(all_workflows) if !all_workflows.is_empty() => {
