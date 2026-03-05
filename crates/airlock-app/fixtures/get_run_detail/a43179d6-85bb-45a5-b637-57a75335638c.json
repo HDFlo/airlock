@@ -33,6 +33,17 @@
   ],
   "step_results": [
     {
+      "id": "c1a2b3d4-5e6f-7890-abcd-ef1234567890",
+      "job_id": "job-a43179d6-default",
+      "job_key": "default",
+      "step": "rebase",
+      "status": "failed",
+      "error": "Failed to spawn command for stage 'rebase': binary not found in PATH\n\nThe configured rebase command could not be located. Ensure that 'git' is installed and available in your shell's PATH.",
+      "duration_ms": 2,
+      "started_at": 1770108317,
+      "completed_at": 1770108317
+    },
+    {
       "id": "df4ed948-8515-4c7c-8ecf-9bc27ad7d1ac",
       "job_id": "job-a43179d6-default",
       "job_key": "default",

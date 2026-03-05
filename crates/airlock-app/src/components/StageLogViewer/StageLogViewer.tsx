@@ -128,6 +128,21 @@ export function StageLogViewer({ step, jobKey, repoId, runId, artifacts = [] }: 
   }
 
   if (!hasLogs && stepArtifacts.length === 0) {
+    if (step.error) {
+      return (
+        <div className="flex h-full items-center justify-center p-6">
+          <div className="bg-danger/10 border-danger/30 max-w-lg rounded-md border p-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="text-danger mt-0.5 h-5 w-5 shrink-0" />
+              <div>
+                <p className="text-danger text-small font-medium">Step failed</p>
+                <p className="text-foreground text-micro mt-1 font-mono whitespace-pre-wrap">{step.error}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="text-foreground-muted flex h-full items-center justify-center">
         <div className="text-center">
@@ -180,6 +195,16 @@ export function StageLogViewer({ step, jobKey, repoId, runId, artifacts = [] }: 
           >
             <X className="h-4 w-4" />
           </Button>
+        </div>
+      )}
+
+      {/* Error banner for failed steps that also have logs */}
+      {step.error && (
+        <div className="bg-danger/10 border-danger/30 mx-3 mt-2 rounded-md border px-3 py-2">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="text-danger mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-danger text-micro font-mono whitespace-pre-wrap">{step.error}</p>
+          </div>
         </div>
       )}
 

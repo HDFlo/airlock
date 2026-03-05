@@ -7,6 +7,10 @@ import type { LogChunkEvent } from './use-airlock-events';
 
 // Mock log content for browser testing
 const mockStageLogs: Record<string, { stdout: string; stderr: string }> = {
+  rebase: {
+    stdout: '',
+    stderr: '',
+  },
   describe: {
     stdout: `[2024-01-15 10:30:00] Starting describe stage...
 [2024-01-15 10:30:01] Analyzing commit: abc1234
