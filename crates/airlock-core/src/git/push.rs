@@ -36,9 +36,9 @@ pub fn push(repo_path: &Path, remote_name: &str, refspecs: &[&str]) -> Result<()
 /// Push refs to a remote using `--force-with-lease` for safe force-push.
 ///
 /// This is used after rebase rewrites history: the upstream ref is no longer an
-/// ancestor of the new HEAD, but we know exactly what it should be (the value we
-/// just fetched). `--force-with-lease=<ref>:<expected>` tells the server to reject
-/// the push if someone else updated the ref in the meantime.
+/// ancestor of the new HEAD, but we know exactly what it should be (typically the
+/// upstream SHA captured during the rebase step). `--force-with-lease=<ref>:<expected>`
+/// tells the server to reject the push if someone else updated the ref in the meantime.
 pub fn push_force_with_lease(
     repo_path: &Path,
     remote_name: &str,

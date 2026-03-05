@@ -89,8 +89,11 @@ pub async fn handle_push_received(ctx: Arc<HandlerContext>, params: serde_json::
 /// Process a coalesced push after the debounce period.
 ///
 /// This partitions refs into:
-/// - Pipeline refs (branch creates/updates) → go through transformation pipeline
 /// - Passthrough refs (tags, deletions, other) → forwarded immediately to upstream
+/// - Branch refs (`refs/heads/*`) → matched against workflows from each ref's tree
+///
+/// Branch refs with matching workflows become pipeline runs. Branch refs with no
+/// matching workflows are forwarded directly to upstream without creating a run.
 pub async fn process_coalesced_push(
     ctx: Arc<HandlerContext>,
     repo_id: &str,
