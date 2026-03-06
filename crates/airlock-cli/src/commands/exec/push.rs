@@ -748,6 +748,177 @@ mod tests {
         clear_push_env();
     }
 
+    /// Helper to resolve a specific ref (not just HEAD).
+    fn resolve_ref(path: &std::path::Path, refspec: &str) -> String {
+        let output = Command::new("git")
+            .args(["rev-parse", refspec])
+            .current_dir(path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "Failed to resolve {}: {}",
+            refspec,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    /// Push with force-with-lease on a feature branch in a detached worktree.
+    ///
+    /// Uses production-like topology: gate bare repo → detached worktree,
+    /// pushing to a feature branch (not main) with diverged history.
+    /// The rebase stage's correct recording of rebase_state.json is validated
+    /// by the executor-level E2E test in airlock-daemon; this test validates
+    /// that the push stage correctly consumes it.
+    #[tokio::test]
+    #[serial]
+    async fn test_push_force_with_lease_on_feature_branch_detached_worktree() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // --- Upstream bare repo ---
+        let upstream_path = temp_dir.path().join("upstream.git");
+        Command::new("git")
+            .args(["init", "--bare"])
+            .arg(&upstream_path)
+            .output()
+            .unwrap();
+
+        // --- Working repo: push initial commit to main ---
+        let work_path = temp_dir.path().join("work");
+        std::fs::create_dir_all(&work_path).unwrap();
+        setup_git_repo(&work_path);
+        Command::new("git")
+            .args(["branch", "-M", "main"])
+            .current_dir(&work_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["remote", "add", "origin"])
+            .arg(upstream_path.to_str().unwrap())
+            .current_dir(&work_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(&work_path)
+            .output()
+            .unwrap();
+
+        // --- Create feature branch with a different commit ---
+        Command::new("git")
+            .args(["checkout", "-b", "feat/test-branch"])
+            .current_dir(&work_path)
+            .output()
+            .unwrap();
+        std::fs::write(work_path.join("feature.txt"), "feature work\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&work_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "feature commit"])
+            .current_dir(&work_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["push", "-u", "origin", "feat/test-branch"])
+            .current_dir(&work_path)
+            .output()
+            .unwrap();
+
+        let feature_sha = resolve_ref(&upstream_path, "refs/heads/feat/test-branch");
+
+        // --- Gate bare repo ---
+        let gate_path = temp_dir.path().join("gate.git");
+        Command::new("git")
+            .args(["init", "--bare"])
+            .arg(&gate_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["remote", "add", "origin"])
+            .arg(upstream_path.to_str().unwrap())
+            .current_dir(&gate_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["fetch", "origin"])
+            .current_dir(&gate_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(&gate_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&gate_path)
+            .output()
+            .unwrap();
+
+        // --- Detached worktree from gate (matching production) ---
+        let worktree_path = temp_dir.path().join("worktree");
+        let wt_result = Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                "--detach",
+                worktree_path.to_str().unwrap(),
+                &feature_sha,
+            ])
+            .current_dir(&gate_path)
+            .output()
+            .unwrap();
+        assert!(
+            wt_result.status.success(),
+            "worktree add failed: {}",
+            String::from_utf8_lossy(&wt_result.stderr)
+        );
+
+        // --- Simulate rebase: amend the commit (diverged history) ---
+        std::fs::write(worktree_path.join("feature.txt"), "feature work (rebased)\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&worktree_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "--amend", "-m", "feature commit (rebased)"])
+            .current_dir(&worktree_path)
+            .output()
+            .unwrap();
+        let worktree_head = get_head(&worktree_path);
+
+        // --- Write rebase_state with correct feature branch SHA ---
+        let artifacts_dir = temp_dir.path().join("artifacts");
+        write_rebase_state(&artifacts_dir, &feature_sha);
+
+        // --- Run push ---
+        std::env::set_var("AIRLOCK_BRANCH", "refs/heads/feat/test-branch");
+        std::env::set_var("AIRLOCK_UPSTREAM_URL", upstream_path.to_str().unwrap());
+        std::env::set_var("AIRLOCK_WORKTREE", worktree_path.to_str().unwrap());
+        std::env::set_var("AIRLOCK_GATE_PATH", gate_path.to_str().unwrap());
+        std::env::set_var("AIRLOCK_ARTIFACTS", artifacts_dir.to_str().unwrap());
+        std::env::set_var("AIRLOCK_HEAD_SHA", &worktree_head);
+        std::env::set_var("AIRLOCK_REPO_ROOT", work_path.to_str().unwrap());
+
+        push()
+            .await
+            .expect("Push should succeed with force-with-lease on feature branch");
+
+        // Upstream should now have the rebased commit
+        let new_upstream = resolve_ref(&upstream_path, "refs/heads/feat/test-branch");
+        assert_eq!(
+            new_upstream, worktree_head,
+            "Upstream feature branch should have the rebased commit"
+        );
+
+        clear_push_env();
+    }
+
     /// Push without a freeze commit (worktree HEAD == original push) should still
     /// update the gate ref and succeed.
     #[tokio::test]

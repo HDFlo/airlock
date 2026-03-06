@@ -2064,4 +2064,353 @@ mod tests {
         assert!(result.exit_code.is_some(), "Command should have run");
         assert_eq!(result.exit_code, Some(0));
     }
+
+    // =========================================================================
+    // E2E rebase→push tests
+    //
+    // These test the bundled rebase and push stages through the real executor,
+    // using production-like topology: gate bare repo → detached worktree.
+    // =========================================================================
+
+    /// Git topology for rebase→push E2E tests.
+    ///
+    /// Mirrors production: upstream (bare) → gate (bare) → detached worktree
+    /// on a feature branch. `origin/HEAD` points to main so any code that
+    /// accidentally resolves `origin/HEAD` instead of `origin/<branch>` will
+    /// get the wrong SHA.
+    struct RebasePushTestbed {
+        _temp_dir: TempDir,
+        upstream_path: PathBuf,
+        gate_path: PathBuf,
+        worktree_path: PathBuf,
+        work_path: PathBuf,
+        artifacts_dir: PathBuf,
+        logs_dir: PathBuf,
+        main_sha: String,
+        feature_sha: String,
+    }
+
+    impl RebasePushTestbed {
+        fn new() -> Self {
+            let temp_dir = TempDir::new().unwrap();
+
+            // Upstream bare repo
+            let upstream_path = temp_dir.path().join("upstream.git");
+            git(temp_dir.path(), &["init", "--bare", upstream_path.to_str().unwrap()]);
+
+            // Working repo: main branch with initial commit
+            let work_path = temp_dir.path().join("work");
+            std::fs::create_dir_all(&work_path).unwrap();
+            git(&work_path, &["init"]);
+            git(&work_path, &["config", "user.email", "test@test.com"]);
+            git(&work_path, &["config", "user.name", "Test"]);
+            std::fs::write(work_path.join("file.txt"), "initial\n").unwrap();
+            git(&work_path, &["add", "."]);
+            git(&work_path, &["commit", "-m", "initial"]);
+            git(&work_path, &["branch", "-M", "main"]);
+            git(&work_path, &["remote", "add", "origin", upstream_path.to_str().unwrap()]);
+            git(&work_path, &["push", "-u", "origin", "main"]);
+
+            // Set upstream HEAD → main (makes origin/HEAD resolve to origin/main)
+            git(&upstream_path, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+            // Feature branch with a different commit
+            git(&work_path, &["checkout", "-b", "feat/test-branch"]);
+            std::fs::write(work_path.join("feature.txt"), "feature work\n").unwrap();
+            git(&work_path, &["add", "."]);
+            git(&work_path, &["commit", "-m", "feature commit"]);
+            git(&work_path, &["push", "-u", "origin", "feat/test-branch"]);
+
+            let main_sha = git_output(&upstream_path, &["rev-parse", "refs/heads/main"]);
+            let feature_sha = git_output(&upstream_path, &["rev-parse", "refs/heads/feat/test-branch"]);
+            assert_ne!(main_sha, feature_sha, "main and feature must differ");
+
+            // Gate bare repo with upstream as origin
+            let gate_path = temp_dir.path().join("gate.git");
+            git(temp_dir.path(), &["init", "--bare", gate_path.to_str().unwrap()]);
+            git(&gate_path, &["remote", "add", "origin", upstream_path.to_str().unwrap()]);
+            git(&gate_path, &["fetch", "origin"]);
+            git(&gate_path, &["config", "user.email", "test@test.com"]);
+            git(&gate_path, &["config", "user.name", "Test"]);
+
+            // Detached worktree from gate (matching production)
+            let worktree_path = temp_dir.path().join("worktree");
+            git(&gate_path, &[
+                "worktree", "add", "--detach",
+                worktree_path.to_str().unwrap(), &feature_sha,
+            ]);
+
+            // Verify detached HEAD — the precondition for the bug
+            assert_eq!(
+                git_output(&worktree_path, &["rev-parse", "--abbrev-ref", "HEAD"]),
+                "HEAD",
+                "Worktree must be in detached HEAD state"
+            );
+
+            let artifacts_dir = temp_dir.path().join("artifacts");
+            let logs_dir = temp_dir.path().join("logs");
+            std::fs::create_dir_all(&artifacts_dir).unwrap();
+            std::fs::create_dir_all(&logs_dir).unwrap();
+
+            Self {
+                _temp_dir: temp_dir,
+                upstream_path,
+                gate_path,
+                worktree_path,
+                work_path,
+                artifacts_dir,
+                logs_dir,
+                main_sha,
+                feature_sha,
+            }
+        }
+
+        fn stage_env(&self) -> StageEnvironment {
+            StageEnvironment {
+                run_id: "test-run".to_string(),
+                branch: "refs/heads/feat/test-branch".to_string(),
+                base_sha: self.main_sha.clone(),
+                head_sha: self.feature_sha.clone(),
+                worktree: self.worktree_path.clone(),
+                artifacts: self.artifacts_dir.clone(),
+                logs_dir: self.logs_dir.clone(),
+                stage_result_path: self.logs_dir.join("result.json"),
+                repo_root: self.work_path.clone(),
+                upstream_url: self.upstream_path.to_str().unwrap().to_string(),
+                gate_path: self.gate_path.clone(),
+                default_branch: "main".to_string(),
+                job_key: None,
+                job_name: None,
+                git_author_name: Some("Test".to_string()),
+                git_author_email: Some("test@test.com".to_string()),
+            }
+        }
+
+        async fn resolve_rebase_stage(&self) -> StepDefinition {
+            let loader = crate::stage_loader::StageLoader::with_cache_dir(
+                self._temp_dir.path().join("cache"),
+            );
+            let unresolved = StepDefinition {
+                name: "rebase".to_string(),
+                uses: Some("airlock-hq/airlock/defaults/rebase@main".to_string()),
+                run: None,
+                shell: None,
+                continue_on_error: false,
+                require_approval: ApprovalMode::Never,
+                timeout: None,
+            };
+            loader
+                .resolve_stage(&unresolved)
+                .await
+                .expect("Failed to resolve bundled rebase stage")
+        }
+
+        /// Build a push stage using the real `airlock` binary.
+        /// Returns None if the binary hasn't been built (e.g. only daemon crate compiled).
+        fn push_stage(&self) -> Option<StepDefinition> {
+            let airlock_bin = std::env::current_exe()
+                .ok()?
+                .parent()?  // target/debug/deps/
+                .parent()?  // target/debug/
+                .join("airlock");
+            if !airlock_bin.exists() {
+                return None;
+            }
+            Some(StepDefinition {
+                name: "push".to_string(),
+                run: Some(format!("{} exec push", airlock_bin.display())),
+                shell: Some("bash".to_string()),
+                continue_on_error: false,
+                require_approval: ApprovalMode::Never,
+                timeout: None,
+                uses: None,
+            })
+        }
+
+        /// Run the rebase stage and return its result.
+        async fn run_rebase(&self) -> StageExecutionResult {
+            let stage = self.resolve_rebase_stage().await;
+            let env = self.stage_env();
+            execute_stage_command_with_streaming(
+                &stage, &env, Duration::from_secs(30), None, None,
+            )
+            .await
+            .expect("Executor should not error")
+        }
+
+        /// Run the push stage and return its result.
+        async fn run_push(&self) -> StageExecutionResult {
+            let stage = self.push_stage().expect("airlock binary must be built");
+            let env = self.stage_env();
+            execute_stage_command_with_streaming(
+                &stage, &env, Duration::from_secs(30), None, None,
+            )
+            .await
+            .expect("Executor should not error")
+        }
+
+        /// Read the upstream SHA from rebase_state.json.
+        fn rebase_state_sha(&self) -> String {
+            let json = std::fs::read_to_string(self.artifacts_dir.join("rebase_state.json"))
+                .expect("rebase_state.json should exist");
+            let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+            v["upstream_sha"].as_str().unwrap().to_string()
+        }
+
+        /// Read push_result.json.
+        fn push_result(&self) -> serde_json::Value {
+            let json = std::fs::read_to_string(self.artifacts_dir.join("push_result.json"))
+                .expect("push_result.json should exist");
+            serde_json::from_str(&json).unwrap()
+        }
+
+        /// Get a ref's SHA from upstream.
+        fn upstream_ref(&self, refspec: &str) -> String {
+            git_output(&self.upstream_path, &["rev-parse", refspec])
+        }
+
+        /// Get worktree HEAD.
+        fn worktree_head(&self) -> String {
+            git_output(&self.worktree_path, &["rev-parse", "HEAD"])
+        }
+
+        /// Simulate a concurrent push to the feature branch on upstream.
+        fn push_concurrent_commit(&self) {
+            git(&self.work_path, &["checkout", "feat/test-branch"]);
+            std::fs::write(self.work_path.join("concurrent.txt"), "concurrent\n").unwrap();
+            git(&self.work_path, &["add", "."]);
+            git(&self.work_path, &["commit", "-m", "concurrent commit"]);
+            git(&self.work_path, &["push", "origin", "feat/test-branch"]);
+        }
+    }
+
+    impl Drop for RebasePushTestbed {
+        fn drop(&mut self) {
+            // Clean up worktree to avoid git warnings
+            let _ = std::process::Command::new("git")
+                .args(["worktree", "remove", "--force"])
+                .arg(self.worktree_path.to_str().unwrap())
+                .current_dir(&self.gate_path)
+                .output();
+        }
+    }
+
+    /// Run a git command, panic on failure.
+    fn git(cwd: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {} failed in {:?}: {}",
+            args.join(" "),
+            cwd,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Run a git command and return trimmed stdout.
+    fn git_output(cwd: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {} failed", args.join(" "));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// Rebase stage records the correct feature branch SHA (not origin/HEAD)
+    /// in a detached worktree, then push succeeds with force-with-lease.
+    ///
+    /// Regression test for the detached HEAD bug: the old rebase script used
+    /// `git rev-parse --abbrev-ref HEAD` which returns "HEAD" in detached mode,
+    /// causing `origin/HEAD` (→ main) to be recorded instead of the feature branch.
+    #[tokio::test]
+    async fn test_rebase_then_push_succeeds_on_feature_branch() {
+        let tb = RebasePushTestbed::new();
+
+        // --- Run the real bundled rebase stage ---
+        let rebase_result = tb.run_rebase().await;
+        assert!(
+            rebase_result.passed,
+            "Rebase should pass.\nstdout: {}\nstderr: {}",
+            rebase_result.stdout, rebase_result.stderr,
+        );
+
+        // Verify rebase_state.json records feature branch SHA, not main
+        let recorded = tb.rebase_state_sha();
+        assert_eq!(
+            recorded, tb.feature_sha,
+            "Must record feature branch SHA ({}), not main ({}). Got: {}",
+            &tb.feature_sha[..12], &tb.main_sha[..12],
+            &recorded[..12.min(recorded.len())],
+        );
+
+        // --- Run the real push stage ---
+        if tb.push_stage().is_none() {
+            eprintln!(
+                "SKIPPING push stage: `airlock` binary not found. \
+                 Run `cargo build -p airlock-cli` first."
+            );
+            return;
+        }
+
+        let push_result = tb.run_push().await;
+        assert!(
+            push_result.passed,
+            "Push should succeed.\nstdout: {}\nstderr: {}",
+            push_result.stdout, push_result.stderr,
+        );
+
+        // Verify upstream was updated
+        let upstream_sha = tb.upstream_ref("refs/heads/feat/test-branch");
+        assert_eq!(
+            upstream_sha,
+            tb.worktree_head(),
+            "Upstream should match worktree HEAD after push"
+        );
+
+        // Verify push_result.json
+        let pr = tb.push_result();
+        assert_eq!(pr["success"], true);
+        assert_eq!(pr["branch"], "feat/test-branch");
+    }
+
+    /// When someone pushes to upstream between rebase and push, the push stage
+    /// must detect the mismatch via rebase_state.json and fail.
+    #[tokio::test]
+    async fn test_rebase_then_push_fails_when_upstream_moves() {
+        let tb = RebasePushTestbed::new();
+
+        // Run rebase (records upstream SHA)
+        let rebase_result = tb.run_rebase().await;
+        assert!(rebase_result.passed, "Rebase should pass");
+
+        // Simulate concurrent push to upstream after rebase
+        tb.push_concurrent_commit();
+
+        if tb.push_stage().is_none() {
+            eprintln!(
+                "SKIPPING push stage: `airlock` binary not found. \
+                 Run `cargo build -p airlock-cli` first."
+            );
+            return;
+        }
+
+        // Push should fail: upstream moved since rebase
+        let push_result = tb.run_push().await;
+        assert!(
+            !push_result.passed,
+            "Push should fail when upstream moved.\nstdout: {}\nstderr: {}",
+            push_result.stdout, push_result.stderr,
+        );
+        assert!(
+            push_result.stderr.contains("changed since the rebase stage ran"),
+            "Should report upstream changed, got stderr: {}",
+            push_result.stderr,
+        );
+    }
 }

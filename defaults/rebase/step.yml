@@ -106,7 +106,7 @@ run: |
   echo "Fetching latest upstream state..."
   git fetch origin
 
-  BRANCH=$(git rev-parse --abbrev-ref HEAD)
+  BRANCH="${AIRLOCK_BRANCH#refs/heads/}"
   DEFAULT_BRANCH="${AIRLOCK_DEFAULT_BRANCH:-main}"
   UPSTREAM_REF="origin/${BRANCH}"
   DEFAULT_REF="origin/${DEFAULT_BRANCH}"
