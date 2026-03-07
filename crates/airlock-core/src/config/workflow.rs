@@ -63,10 +63,6 @@ pub struct JobConfig {
     /// Ordered list of steps to execute within this job.
     #[serde(default)]
     pub steps: Vec<StepDefinition>,
-
-    /// Keep worktree after job completion (debug flag).
-    #[serde(default, rename = "keep-worktrees")]
-    pub keep_worktrees: bool,
 }
 
 /// A helper type that deserializes from either a single string or a list of strings.
@@ -442,21 +438,6 @@ jobs:
     }
 
     #[test]
-    fn test_deserialize_keep_worktrees() {
-        let yaml = r#"
-jobs:
-  debug:
-    keep-worktrees: true
-    steps:
-      - name: test
-        run: cargo test
-"#;
-        let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
-        let job = config.jobs.get("debug").unwrap();
-        assert!(job.keep_worktrees);
-    }
-
-    #[test]
     fn test_needs_single_string() {
         let yaml = r#"
 jobs:
@@ -607,7 +588,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec![]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
 
@@ -625,7 +605,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec![]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
         jobs.insert(
@@ -634,7 +613,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec![]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
 
@@ -654,7 +632,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec![]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
         jobs.insert(
@@ -663,7 +640,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec!["build".to_string()]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
         jobs.insert(
@@ -672,7 +648,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec!["test".to_string()]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
 
@@ -693,7 +668,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec![]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
         jobs.insert(
@@ -702,7 +676,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec![]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
         jobs.insert(
@@ -711,7 +684,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec!["lint".to_string(), "test".to_string()]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
 
@@ -732,7 +704,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec!["b".to_string()]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
         jobs.insert(
@@ -741,7 +712,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec!["a".to_string()]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
 
@@ -765,7 +735,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec!["nonexistent".to_string()]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
 
@@ -796,7 +765,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec!["a".to_string()]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
 
@@ -813,7 +781,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec!["c".to_string()]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
         jobs.insert(
@@ -822,7 +789,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec!["a".to_string()]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
         jobs.insert(
@@ -831,7 +797,6 @@ jobs:
                 name: None,
                 needs: OneOrMany(vec!["b".to_string()]),
                 steps: vec![],
-                keep_worktrees: false,
             },
         );
 

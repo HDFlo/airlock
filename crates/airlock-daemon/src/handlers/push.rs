@@ -8,8 +8,8 @@ use super::HandlerContext;
 use crate::ipc::AirlockEvent;
 use crate::push_coalescer;
 use airlock_core::config::{filter_workflows_for_branch, load_workflows_from_tree, WorkflowConfig};
-use airlock_core::{git, RefUpdate, Repo, Run};
-use std::path::Path;
+use airlock_core::{git, JobStatus, RefUpdate, Repo, Run};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
@@ -199,6 +199,8 @@ pub async fn process_coalesced_push(
 
     // Supersede any overlapping active runs
     let had_superseded;
+    // Paused jobs from superseded runs whose pool slots need releasing
+    let mut paused_jobs_to_release: Vec<(String, String, Option<PathBuf>)> = Vec::new();
     {
         let db = ctx.db.lock().await;
         match push_coalescer::supersede_overlapping_runs(&db, repo_id, &pipeline_updates) {
@@ -210,6 +212,23 @@ pub async fn process_coalesced_push(
                         superseded.len(),
                         repo_id
                     );
+
+                    // Collect paused jobs from superseded runs so we can skip them
+                    // and release their pool slots after the DB lock drops.
+                    for superseded_run in &superseded {
+                        if let Ok(jobs) = db.get_job_results_for_run(&superseded_run.id) {
+                            for job in &jobs {
+                                if job.status == JobStatus::AwaitingApproval {
+                                    paused_jobs_to_release.push((
+                                        job.id.clone(),
+                                        superseded_run.repo_id.clone(),
+                                        job.worktree_path.as_ref().map(PathBuf::from),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
                     // Inherit base_sha from superseded runs to avoid the
                     // "superseding gap" where changes get forwarded without review.
                     // For each superseded run, if it has a matching ref_name,
@@ -237,6 +256,49 @@ pub async fn process_coalesced_push(
             Err(e) => {
                 had_superseded = false;
                 warn!("Failed to supersede overlapping runs: {}", e);
+            }
+        }
+    }
+
+    // Outside the DB lock: mark paused jobs from superseded runs as Skipped
+    // and release their pool worktree slots.
+    // Use conditional update to avoid overwriting a status that changed between
+    // when we collected the jobs (under lock) and now.
+    for (job_id, job_repo_id, worktree_path) in &paused_jobs_to_release {
+        let ts = now();
+        let was_updated = {
+            let db = ctx.db.lock().await;
+            db.update_job_status_if(
+                job_id,
+                JobStatus::AwaitingApproval,
+                JobStatus::Skipped,
+                Some(ts),
+                Some("Superseded by newer push"),
+            )
+            .unwrap_or(false)
+        };
+        if !was_updated {
+            // Job status changed between collection and update (e.g., user approved it).
+            // Skip pool release — the approval handler will handle cleanup.
+            debug!(
+                "Skipping pool release for job {} — status already changed from AwaitingApproval",
+                job_id
+            );
+            continue;
+        }
+        if let Some(wt_path) = worktree_path {
+            if let Some(lease) = ctx
+                .worktree_pool
+                .find_lease_by_path(job_repo_id, wt_path)
+                .await
+            {
+                info!(
+                    "Releasing pool slot {} for superseded job {}",
+                    lease.slot_index, job_id
+                );
+                ctx.worktree_pool
+                    .release(job_repo_id, lease.slot_index)
+                    .await;
             }
         }
     }
@@ -380,8 +442,7 @@ pub async fn process_coalesced_push(
         // If we superseded runs in the DB, cancel their runtime tokens too.
         if had_superseded {
             ctx.run_queue
-                .cancel_active(&repo.id, Some(&pipeline_ref_names))
-                .await;
+                .cancel_active(&repo.id, Some(&pipeline_ref_names));
         }
         return;
     }
@@ -1157,6 +1218,7 @@ mod tests {
                 started_at: Some(1704067200),
                 completed_at: Some(1704067210),
                 error: Some("step failed".to_string()),
+                worktree_path: None,
             };
             db.insert_job_result(&job).unwrap();
 
@@ -1307,6 +1369,7 @@ mod tests {
             started_at: Some(1704067200),
             completed_at: Some(1704067210),
             error: Some("step failed".to_string()),
+            worktree_path: None,
         };
         db.insert_job_result(&job).unwrap();
 
@@ -1503,6 +1566,7 @@ mod tests {
             started_at: Some(1704067200),
             completed_at: Some(1704067210),
             error: None,
+            worktree_path: None,
         };
         db.insert_job_result(&job).unwrap();
 
@@ -1641,6 +1705,7 @@ mod tests {
                 started_at: Some(1704067200),
                 completed_at: Some(1704067210),
                 error: Some("lint failed".to_string()),
+                worktree_path: None,
             };
             db.insert_job_result(&job).unwrap();
         }
