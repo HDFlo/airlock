@@ -605,6 +605,7 @@ EXAMPLES:
 - Reviewing and approving Push Requests
 - Viewing diffs with inline comments
 - Reviewing and applying patches
+- Stopping running pipelines
 - Configuration
 
 ---

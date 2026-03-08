@@ -688,7 +688,7 @@ Helper methods on `Run`:
 
 - Limit concurrent pipeline executions globally (e.g., max 2-4)
 - Per-repo serialization to avoid conflicts
-- Support cancellation of in-progress pipelines when superseded
+- Support cancellation of in-progress pipelines when superseded or stopped by user
 
 **Resource Management:**
 
