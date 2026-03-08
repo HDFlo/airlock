@@ -234,10 +234,18 @@ export function useRuns(repoId: string | null, limit?: number) {
     initialLoading: false,
   });
 
-  // Auto-refresh on run events for this repo
+  // Auto-refresh on run and job events so derived status stays current
   useRefreshOnEvents(refresh, {
     repoId,
-    events: [AIRLOCK_EVENTS.RUN_CREATED, AIRLOCK_EVENTS.RUN_UPDATED, AIRLOCK_EVENTS.RUN_COMPLETED],
+    events: [
+      AIRLOCK_EVENTS.RUN_CREATED,
+      AIRLOCK_EVENTS.RUN_UPDATED,
+      AIRLOCK_EVENTS.RUN_COMPLETED,
+      AIRLOCK_EVENTS.JOB_STARTED,
+      AIRLOCK_EVENTS.JOB_COMPLETED,
+      AIRLOCK_EVENTS.STEP_STARTED,
+      AIRLOCK_EVENTS.STEP_COMPLETED,
+    ],
   });
 
   return { runs, error, loading, refresh };
@@ -525,9 +533,17 @@ export function useAllRuns(limit?: number) {
 
   const { data: runs, error, loading, refresh } = useDaemonQuery<(RunInfo & { repo_name: string })[]>(fetcher, []);
 
-  // Auto-refresh on any run events (no repo filter since this is for all repos)
+  // Auto-refresh on run, job, and step events so derived status (executing/awaiting counts) stays current
   useRefreshOnEvents(refresh, {
-    events: [AIRLOCK_EVENTS.RUN_CREATED, AIRLOCK_EVENTS.RUN_UPDATED, AIRLOCK_EVENTS.RUN_COMPLETED],
+    events: [
+      AIRLOCK_EVENTS.RUN_CREATED,
+      AIRLOCK_EVENTS.RUN_UPDATED,
+      AIRLOCK_EVENTS.RUN_COMPLETED,
+      AIRLOCK_EVENTS.JOB_STARTED,
+      AIRLOCK_EVENTS.JOB_COMPLETED,
+      AIRLOCK_EVENTS.STEP_STARTED,
+      AIRLOCK_EVENTS.STEP_COMPLETED,
+    ],
   });
 
   return { runs, error, loading, refresh };
