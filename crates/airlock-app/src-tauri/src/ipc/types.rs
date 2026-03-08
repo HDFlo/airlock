@@ -133,3 +133,8 @@ pub(crate) struct DaemonUpdateIntentDescriptionResult {
 pub(crate) struct DaemonReprocessRunResult {
     pub success: bool,
 }
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DaemonCancelRunResult {
+    pub success: bool,
+}

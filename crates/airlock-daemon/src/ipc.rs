@@ -211,6 +211,9 @@ pub mod methods {
 
     /// Apply selected patches to a run's worktree.
     pub const APPLY_PATCHES: &str = "apply_patches";
+
+    /// Cancel a running pipeline run.
+    pub const CANCEL_RUN: &str = "cancel_run";
 }
 
 // =============================================================================
@@ -351,6 +354,13 @@ pub struct ApplyPatchesParams {
 
     /// Paths to the patch artifact JSON files to apply.
     pub patch_paths: Vec<String>,
+}
+
+/// Parameters for the `cancel_run` method.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CancelRunParams {
+    /// Run ID to cancel.
+    pub run_id: String,
 }
 
 /// Parameters for the `get_config` method.
@@ -674,6 +684,16 @@ pub struct ReprocessRunResult {
 
     /// New status of the run.
     pub new_status: String,
+}
+
+/// Result for the `cancel_run` method.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CancelRunResult {
+    /// Run ID that was cancelled.
+    pub run_id: String,
+
+    /// Whether the cancellation succeeded.
+    pub success: bool,
 }
 
 // =============================================================================

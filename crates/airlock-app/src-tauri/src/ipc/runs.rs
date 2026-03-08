@@ -1,7 +1,9 @@
 //! Run-related IPC methods.
 
 use super::error::IpcError;
-use super::types::{DaemonGetRunsResult, DaemonReprocessRunResult, DaemonRunDetailResult};
+use super::types::{
+    DaemonCancelRunResult, DaemonGetRunsResult, DaemonReprocessRunResult, DaemonRunDetailResult,
+};
 use super::IpcClient;
 use crate::{ApplyPatchesResult, ApproveStepResult, GetRunDiffResult, RunDetail, RunInfo};
 
@@ -57,6 +59,16 @@ impl IpcClient {
             .await?;
 
         let daemon_result: DaemonReprocessRunResult = serde_json::from_value(result)?;
+        Ok(daemon_result.success)
+    }
+
+    /// Cancel a running pipeline run
+    pub async fn cancel_run(&self, run_id: &str) -> Result<bool, IpcError> {
+        let result = self
+            .send_request("cancel_run", serde_json::json!({ "run_id": run_id }))
+            .await?;
+
+        let daemon_result: DaemonCancelRunResult = serde_json::from_value(result)?;
         Ok(daemon_result.success)
     }
 

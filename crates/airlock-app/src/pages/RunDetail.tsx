@@ -8,6 +8,7 @@ import {
   useRepos,
   getRepoNameFromUrl,
   reprocessRun,
+  cancelRun,
   approveStep,
   readArtifact,
   applyPatches,
@@ -26,6 +27,7 @@ import {
   BookOpen,
   Copy,
   Check,
+  Square,
 } from 'lucide-react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useState, useCallback, useMemo, useEffect } from 'react';
@@ -79,6 +81,7 @@ export function RunDetail() {
     return repo ? getRepoNameFromUrl(repo.upstream_url) : undefined;
   }, [repos, repoId]);
   const [reprocessing, setReprocessing] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [approvingStep, setApprovingStep] = useState<StepSelection | null>(null);
   const [allComments, setAllComments] = useState<CodeComment[]>([]);
   const [selectedComments, setSelectedComments] = useState<Set<string>>(new Set());
@@ -98,6 +101,19 @@ export function RunDetail() {
       console.error('Reprocess failed:', e);
     } finally {
       setReprocessing(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!runId) return;
+    try {
+      setCancelling(true);
+      await cancelRun(runId);
+      await refresh();
+    } catch (e) {
+      console.error('Cancel failed:', e);
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -369,7 +385,22 @@ export function RunDetail() {
         </div>
 
         <div className="flex items-center gap-2">
-          {detail?.run.status !== 'running' && (
+          {detail?.run.status === 'running' ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="border-border-subtle"
+              onClick={handleCancel}
+              disabled={cancelling}
+            >
+              {cancelling ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Square className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Stop
+            </Button>
+          ) : (
             <Button
               variant="ghost"
               size="sm"

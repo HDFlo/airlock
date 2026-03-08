@@ -191,6 +191,16 @@ async fn reprocess_run(state: State<'_, AppState>, run_id: String) -> Result<boo
         .map_err(|e| e.to_string())
 }
 
+/// Cancel a running pipeline run
+#[tauri::command]
+async fn cancel_run(state: State<'_, AppState>, run_id: String) -> Result<bool, String> {
+    state
+        .ipc_client
+        .cancel_run(&run_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Approve an intent (mark as ready for forwarding)
 #[tauri::command]
 async fn approve_intent(
@@ -522,6 +532,7 @@ pub fn run() {
             get_intent_diff,
             get_intent_tour,
             reprocess_run,
+            cancel_run,
             approve_intent,
             reject_intent,
             approve_step,

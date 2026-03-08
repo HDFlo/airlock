@@ -6,9 +6,9 @@ use super::pipeline::execute_pipeline;
 use super::util::{load_artifacts, parse_params};
 use super::HandlerContext;
 use crate::ipc::{
-    error_codes, GetRunDetailParams, GetRunDetailResult, GetRunsParams, GetRunsResult,
-    JobResultInfo, RefUpdateParam, ReprocessRunParams, ReprocessRunResult, Response, RunDetailInfo,
-    RunInfo, StepResultInfo,
+    error_codes, CancelRunParams, CancelRunResult, GetRunDetailParams, GetRunDetailResult,
+    GetRunsParams, GetRunsResult, JobResultInfo, RefUpdateParam, ReprocessRunParams,
+    ReprocessRunResult, Response, RunDetailInfo, RunInfo, StepResultInfo,
 };
 use airlock_core::StepStatus;
 use std::sync::Arc;
@@ -343,6 +343,85 @@ pub async fn handle_reprocess_run(
         run_id: params.run_id,
         success: true,
         new_status: "running".to_string(),
+    };
+
+    Response::success(id, serde_json::to_value(result).unwrap())
+}
+
+/// Handle the `cancel_run` method.
+///
+/// Cancels a currently running pipeline run. This:
+/// 1. Validates the run exists and is currently running
+/// 2. Sets the run error to "Stopped by user" in the database
+/// 3. Triggers the CancellationToken via the run queue
+pub async fn handle_cancel_run(
+    ctx: Arc<HandlerContext>,
+    params: serde_json::Value,
+    id: serde_json::Value,
+) -> Response {
+    let params: CancelRunParams = match parse_params(params, &id) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    // Get run and verify it's running
+    let run = {
+        let db = ctx.db.lock().await;
+        match db.get_run(&params.run_id) {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                return Response::error(
+                    id,
+                    error_codes::RUN_NOT_FOUND,
+                    format!("Run not found: {}", params.run_id),
+                )
+            }
+            Err(e) => {
+                return Response::error(
+                    id,
+                    error_codes::DATABASE_ERROR,
+                    format!("Failed to query database: {}", e),
+                )
+            }
+        }
+    };
+
+    let jobs = {
+        let db = ctx.db.lock().await;
+        db.get_job_results_for_run(&run.id).unwrap_or_default()
+    };
+
+    if !run.is_running_from_jobs(&jobs) {
+        return Response::error(
+            id,
+            error_codes::INVALID_REPO_STATE,
+            "Cannot cancel a run that is not running".to_string(),
+        );
+    }
+
+    // Set the run error before cancelling so mark_run_cancelled preserves it
+    {
+        let db = ctx.db.lock().await;
+        if let Err(e) = db.update_run_error(&params.run_id, Some("Stopped by user")) {
+            warn!("Failed to set run error: {}", e);
+        }
+    }
+
+    // Cancel the active run via the run queue
+    let branch = run.branch.clone();
+    let ref_names = if branch.is_empty() {
+        None
+    } else {
+        Some(vec![format!("refs/heads/{}", branch)])
+    };
+    ctx.run_queue
+        .cancel_active(&run.repo_id, ref_names.as_deref());
+
+    info!("Cancelled run {} for repo {}", run.id, run.repo_id);
+
+    let result = CancelRunResult {
+        run_id: params.run_id,
+        success: true,
     };
 
     Response::success(id, serde_json::to_value(result).unwrap())

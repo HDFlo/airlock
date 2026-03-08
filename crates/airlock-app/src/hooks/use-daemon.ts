@@ -375,6 +375,10 @@ export async function reprocessRun(runId: string): Promise<boolean> {
   return invoke<boolean>('reprocess_run', { runId });
 }
 
+export async function cancelRun(runId: string): Promise<boolean> {
+  return invoke<boolean>('cancel_run', { runId });
+}
+
 // =============================================================================
 // Apply Patches Types and Functions
 // =============================================================================

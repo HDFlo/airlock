@@ -1426,10 +1426,18 @@ pub(super) fn step_status_str(status: StepStatus) -> &'static str {
     }
 }
 
-/// Mark a run as cancelled (superseded by a newer push).
+/// Mark a run as cancelled (superseded by a newer push or stopped by user).
+///
+/// If the run already has an error set (e.g. "Stopped by user"), it is
+/// preserved.  Otherwise we default to "Superseded by newer push".
 async fn mark_run_cancelled(ctx: &Arc<HandlerContext>, run: &Run) {
     let db = ctx.db.lock().await;
-    let _ = db.update_run_error(&run.id, Some("Superseded by newer push"));
+    // Only set the default cancellation message if no error is already present
+    let existing = db.get_run(&run.id).ok().flatten();
+    let already_has_error = existing.as_ref().is_some_and(|r| r.error.is_some());
+    if !already_has_error {
+        let _ = db.update_run_error(&run.id, Some("Superseded by newer push"));
+    }
     drop(db);
 
     ctx.emit(AirlockEvent::RunCompleted {
