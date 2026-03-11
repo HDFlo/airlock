@@ -47,6 +47,14 @@ pub async fn handle_sync(
         }
     };
 
+    // Compute protected branches (those with active pipeline runs).
+    // On DB error, treat all branches as protected to avoid dropping commits.
+    let protected_branches = {
+        let db = ctx.db.lock().await;
+        sync::get_protected_branches(&db, &repo.id)
+            .unwrap_or_else(|| sync::all_local_branches(&repo.gate_path))
+    };
+
     // Smart sync from upstream, preserving un-forwarded commits
     let synced_at = now();
     let sync_worktree_dir = ctx.paths.sync_worktree_dir(&repo.id);
@@ -55,6 +63,7 @@ pub async fn handle_sync(
         "origin",
         Some(&sync_worktree_dir),
         git::ConflictResolver::Agent,
+        &protected_branches,
     ) {
         Ok(report) => {
             if !report.warnings.is_empty() {
@@ -120,6 +129,13 @@ pub async fn handle_sync_all(ctx: Arc<HandlerContext>, id: serde_json::Value) ->
 
     for repo in repos {
         let synced_at = now();
+        // Compute protected branches for this repo.
+        // On DB error, treat all branches as protected to avoid dropping commits.
+        let protected_branches = {
+            let db = ctx.db.lock().await;
+            sync::get_protected_branches(&db, &repo.id)
+                .unwrap_or_else(|| sync::all_local_branches(&repo.gate_path))
+        };
         // Smart sync from upstream, preserving un-forwarded commits
         let sync_worktree_dir = ctx.paths.sync_worktree_dir(&repo.id);
         match git::smart_sync_from_remote(
@@ -127,6 +143,7 @@ pub async fn handle_sync_all(ctx: Arc<HandlerContext>, id: serde_json::Value) ->
             "origin",
             Some(&sync_worktree_dir),
             git::ConflictResolver::Agent,
+            &protected_branches,
         ) {
             Ok(report) => {
                 if !report.warnings.is_empty() {
@@ -233,8 +250,16 @@ pub async fn handle_fetch_notification(
     let repo_id = repo.id.clone();
     debug!("Found repo {} for fetch notification", repo_id);
 
+    // Compute protected branches before sync.
+    // On DB error, treat all branches as protected to avoid dropping commits.
+    let protected_branches = {
+        let db = ctx.db.lock().await;
+        sync::get_protected_branches(&db, &repo_id)
+            .unwrap_or_else(|| sync::all_local_branches(&repo.gate_path))
+    };
+
     // Perform sync-on-fetch logic (does not touch database)
-    let sync_result = sync::sync_if_stale(&ctx.paths, &repo).await;
+    let sync_result = sync::sync_if_stale(&ctx.paths, &repo, &protected_branches).await;
 
     // Update database if sync was successful
     if sync_result.synced && sync_result.success {
