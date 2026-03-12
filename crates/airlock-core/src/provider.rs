@@ -32,7 +32,8 @@ impl ScmProvider {
         match self {
             Self::GitHub => Some("gh"),
             Self::GitLab => Some("glab"),
-            Self::Bitbucket | Self::AzureDevOps | Self::Unknown => None,
+            Self::Bitbucket => Some("bb"),
+            Self::AzureDevOps | Self::Unknown => None,
         }
     }
 
@@ -41,7 +42,10 @@ impl ScmProvider {
         match self {
             Self::GitHub => Some("https://cli.github.com"),
             Self::GitLab => Some("https://gitlab.com/gitlab-org/cli"),
-            Self::Bitbucket | Self::AzureDevOps | Self::Unknown => None,
+            Self::Bitbucket => {
+                Some("https://developer.atlassian.com/cloud/bitbucket/bitbucket-cli/")
+            }
+            Self::AzureDevOps | Self::Unknown => None,
         }
     }
 }
@@ -53,6 +57,8 @@ pub struct ProviderCheck {
     pub cli_installed: bool,
     pub cli_authenticated: bool,
     pub cli_name: Option<String>,
+    pub api_checked: bool,
+    pub api_authenticated: bool,
 }
 
 /// Detect the SCM provider from a remote URL.
@@ -84,11 +90,15 @@ pub fn check_provider_setup(url: &str) -> ProviderCheck {
         false
     };
 
+    let (api_checked, api_authenticated) = check_api_authenticated(&provider);
+
     ProviderCheck {
         provider,
         cli_installed,
         cli_authenticated,
         cli_name,
+        api_checked,
+        api_authenticated,
     }
 }
 
@@ -97,6 +107,7 @@ fn check_cli_authenticated(provider: &ScmProvider) -> bool {
     let (cmd, args) = match provider {
         ScmProvider::GitHub => ("gh", vec!["auth", "status"]),
         ScmProvider::GitLab => ("glab", vec!["auth", "status"]),
+        ScmProvider::Bitbucket => ("bb", vec!["auth", "status"]),
         _ => return false,
     };
 
@@ -107,6 +118,68 @@ fn check_cli_authenticated(provider: &ScmProvider) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// Check provider API credentials from environment variables, when supported.
+fn check_api_authenticated(provider: &ScmProvider) -> (bool, bool) {
+    match provider {
+        ScmProvider::Bitbucket => check_bitbucket_api_authenticated(),
+        _ => (false, false),
+    }
+}
+
+fn check_bitbucket_api_authenticated() -> (bool, bool) {
+    let token = std::env::var("BITBUCKET_TOKEN").ok();
+    let username = std::env::var("BITBUCKET_USERNAME").ok();
+    let app_password = std::env::var("BITBUCKET_APP_PASSWORD").ok();
+
+    if let Some(token) = token {
+        if token.trim().is_empty() {
+            return (false, false);
+        }
+
+        let success = std::process::Command::new("curl")
+            .args([
+                "-fsS",
+                "--max-time",
+                "5",
+                "-H",
+                &format!("Authorization: Bearer {token}"),
+                "https://api.bitbucket.org/2.0/user",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        return (true, success);
+    }
+
+    if let (Some(username), Some(app_password)) = (username, app_password) {
+        if username.trim().is_empty() || app_password.trim().is_empty() {
+            return (false, false);
+        }
+
+        let success = std::process::Command::new("curl")
+            .args([
+                "-fsS",
+                "--max-time",
+                "5",
+                "--user",
+                &format!("{username}:{app_password}"),
+                "https://api.bitbucket.org/2.0/user",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        return (true, success);
+    }
+
+    (false, false)
 }
 
 #[cfg(test)]
@@ -202,7 +275,7 @@ mod tests {
     fn cli_tools() {
         assert_eq!(ScmProvider::GitHub.cli_tool(), Some("gh"));
         assert_eq!(ScmProvider::GitLab.cli_tool(), Some("glab"));
-        assert_eq!(ScmProvider::Bitbucket.cli_tool(), None);
+        assert_eq!(ScmProvider::Bitbucket.cli_tool(), Some("bb"));
         assert_eq!(ScmProvider::AzureDevOps.cli_tool(), None);
         assert_eq!(ScmProvider::Unknown.cli_tool(), None);
     }
@@ -217,7 +290,10 @@ mod tests {
             ScmProvider::GitLab.install_hint(),
             Some("https://gitlab.com/gitlab-org/cli"),
         );
-        assert_eq!(ScmProvider::Bitbucket.install_hint(), None);
+        assert_eq!(
+            ScmProvider::Bitbucket.install_hint(),
+            Some("https://developer.atlassian.com/cloud/bitbucket/bitbucket-cli/"),
+        );
     }
 
     // --- check_provider_setup ---
@@ -229,6 +305,8 @@ mod tests {
         assert!(!check.cli_installed);
         assert!(!check.cli_authenticated);
         assert!(check.cli_name.is_none());
+        assert!(!check.api_checked);
+        assert!(!check.api_authenticated);
     }
 
     #[test]
@@ -237,6 +315,8 @@ mod tests {
         assert_eq!(check.provider, ScmProvider::Bitbucket);
         assert!(!check.cli_installed);
         assert!(!check.cli_authenticated);
-        assert!(check.cli_name.is_none());
+        assert_eq!(check.cli_name.as_deref(), Some("bb"));
+        assert!(!check.api_checked);
+        assert!(!check.api_authenticated);
     }
 }
