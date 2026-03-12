@@ -108,7 +108,7 @@ fn print_provider_check(check: &ProviderCheck) {
     println!("Detected provider: {}", check.provider.display_name());
 
     match check.provider {
-        ScmProvider::Bitbucket | ScmProvider::AzureDevOps | ScmProvider::Unknown => {
+        ScmProvider::AzureDevOps | ScmProvider::Unknown => {
             println!(
                 "  ! {} is not supported by Airlock at the moment.",
                 check.provider.display_name()
@@ -124,22 +124,44 @@ fn print_provider_check(check: &ProviderCheck) {
                     "  \u{2713} {} is installed and authenticated \u{2014} pull request creation is ready",
                     cli
                 );
+            } else if check.provider == ScmProvider::Bitbucket
+                && check.api_checked
+                && check.api_authenticated
+            {
+                println!(
+                    "  ✓ Bitbucket API credentials are valid — pull request creation is ready"
+                );
             } else if check.cli_installed {
                 let auth_cmd = match check.provider {
                     ScmProvider::GitHub => "gh auth login",
                     ScmProvider::GitLab => "glab auth login",
+                    ScmProvider::Bitbucket => "bb auth login",
                     _ => unreachable!(),
                 };
                 println!("  ! {} is installed but not authenticated", cli);
                 println!("    Airlock won't be able to create pull requests automatically.");
                 println!("    Everything else will work normally.");
                 println!("    Run `{}` to authenticate.", auth_cmd);
+                if check.provider == ScmProvider::Bitbucket {
+                    println!("    Or set BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD.");
+                }
             } else {
                 let hint = check.provider.install_hint().unwrap_or("");
                 println!("  ! {} is not installed", cli);
                 println!("    Airlock won't be able to create pull requests automatically.");
                 println!("    Everything else will work normally.");
                 println!("    Install: {}", hint);
+                if check.provider == ScmProvider::Bitbucket {
+                    if check.api_checked && !check.api_authenticated {
+                        println!(
+                            "    BITBUCKET credentials were found but failed validation against Bitbucket API."
+                        );
+                    } else {
+                        println!(
+                            "    Fallback: set BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD."
+                        );
+                    }
+                }
             }
         }
     }
