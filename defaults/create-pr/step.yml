@@ -35,7 +35,7 @@ run: |
   elif [[ "$AIRLOCK_UPSTREAM_URL" == *"bitbucket.org"* ]]; then
     BB_READY=false
 
-    if command -v bb &>/dev/null && bb auth status &>/dev/null 2>&1; then
+    if command -v bb &>/dev/null && bb auth status &>/dev/null; then
       BB_READY=true
       echo "Bitbucket auth: using bb CLI session"
     fi
@@ -46,16 +46,16 @@ run: |
           BB_READY=true
           echo "Bitbucket auth: using BITBUCKET_TOKEN"
         else
-          echo "Skipping: BITBUCKET_TOKEN is set but failed validation against https://api.bitbucket.org/2.0/user"
-          exit 0
+          echo "error: BITBUCKET_TOKEN is set but failed validation against https://api.bitbucket.org/2.0/user" >&2
+          exit 1
         fi
       elif [[ -n "${BITBUCKET_USERNAME:-}" && -n "${BITBUCKET_APP_PASSWORD:-}" ]]; then
         if curl -fsS --max-time 5 --user "$BITBUCKET_USERNAME:$BITBUCKET_APP_PASSWORD" "https://api.bitbucket.org/2.0/user" >/dev/null; then
           BB_READY=true
           echo "Bitbucket auth: using BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD"
         else
-          echo "Skipping: BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD are set but failed validation against https://api.bitbucket.org/2.0/user"
-          exit 0
+          echo "error: BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD are set but failed validation against https://api.bitbucket.org/2.0/user" >&2
+          exit 1
         fi
       fi
     fi

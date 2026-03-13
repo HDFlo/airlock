@@ -78,6 +78,13 @@ pub fn detect_provider(url: &str) -> ScmProvider {
 }
 
 /// Check whether the CLI for a provider is installed and authenticated.
+///
+/// # Network Calls
+///
+/// This function makes a live HTTP request to validate API credentials for some
+/// providers (currently Bitbucket). The request has a 5-second timeout. Callers
+/// should be prepared for this blocking call and may want to show a progress
+/// indicator in interactive contexts.
 pub fn check_provider_setup(url: &str) -> ProviderCheck {
     let provider = detect_provider(url);
     let cli_name = provider.cli_tool().map(|s| s.to_string());
@@ -121,6 +128,10 @@ fn check_cli_authenticated(provider: &ScmProvider) -> bool {
 }
 
 /// Check provider API credentials from environment variables, when supported.
+///
+/// Returns `(api_checked, api_authenticated)` where `api_checked` indicates whether
+/// any credentials were found to validate, and `api_authenticated` indicates whether
+/// the validation succeeded.
 fn check_api_authenticated(provider: &ScmProvider) -> (bool, bool) {
     match provider {
         ScmProvider::Bitbucket => check_bitbucket_api_authenticated(),
@@ -128,58 +139,86 @@ fn check_api_authenticated(provider: &ScmProvider) -> (bool, bool) {
     }
 }
 
+/// Check Bitbucket API credentials from environment variables.
+///
+/// Checks credentials in order of preference:
+/// 1. `BITBUCKET_TOKEN` (Bearer token)
+/// 2. `BITBUCKET_USERNAME` + `BITBUCKET_APP_PASSWORD` (Basic auth)
+///
+/// Returns `(api_checked, api_authenticated)`. If one credential pair is set but
+/// empty or invalid, falls through to check the next pair rather than failing
+/// immediately.
 fn check_bitbucket_api_authenticated() -> (bool, bool) {
     let token = std::env::var("BITBUCKET_TOKEN").ok();
     let username = std::env::var("BITBUCKET_USERNAME").ok();
     let app_password = std::env::var("BITBUCKET_APP_PASSWORD").ok();
 
+    // Try BITBUCKET_TOKEN first (if set and non-empty)
     if let Some(token) = token {
-        if token.trim().is_empty() {
-            return (false, false);
+        if !token.trim().is_empty() {
+            match validate_bitbucket_bearer_token(&token) {
+                Ok(true) => return (true, true),
+                Ok(false) => return (true, false),
+                Err(_) => {
+                    // Validation failed, fall through to try username/password
+                }
+            }
         }
-
-        let success = std::process::Command::new("curl")
-            .args([
-                "-fsS",
-                "--max-time",
-                "5",
-                "-H",
-                &format!("Authorization: Bearer {token}"),
-                "https://api.bitbucket.org/2.0/user",
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        return (true, success);
+        // Token was empty or validation errored, continue to next method
     }
 
+    // Try BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD (if both set and non-empty)
     if let (Some(username), Some(app_password)) = (username, app_password) {
-        if username.trim().is_empty() || app_password.trim().is_empty() {
-            return (false, false);
+        if !username.trim().is_empty() && !app_password.trim().is_empty() {
+            match validate_bitbucket_basic_auth(&username, &app_password) {
+                Ok(true) => return (true, true),
+                Ok(false) => return (true, false),
+                Err(_) => {
+                    // Validation failed
+                }
+            }
         }
-
-        let success = std::process::Command::new("curl")
-            .args([
-                "-fsS",
-                "--max-time",
-                "5",
-                "--user",
-                &format!("{username}:{app_password}"),
-                "https://api.bitbucket.org/2.0/user",
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        return (true, success);
     }
 
     (false, false)
+}
+
+/// Validate a Bitbucket Bearer token by making an API request.
+///
+/// Uses ureq to avoid exposing the token in the process argument list.
+/// Returns `Ok(true)` if authenticated, `Ok(false)` if credentials are invalid,
+/// or `Err` if the request failed due to network/timeout issues.
+fn validate_bitbucket_bearer_token(token: &str) -> Result<bool, ureq::Error> {
+    let response = ureq::get("https://api.bitbucket.org/2.0/user")
+        .header("Authorization", format!("Bearer {token}"))
+        .call()?;
+
+    Ok(response.status().is_success())
+}
+
+/// Validate Bitbucket Basic auth credentials by making an API request.
+///
+/// Uses ureq to avoid exposing credentials in the process argument list.
+/// Returns `Ok(true)` if authenticated, `Ok(false)` if credentials are invalid,
+/// or `Err` if the request failed due to network/timeout issues.
+fn validate_bitbucket_basic_auth(username: &str, app_password: &str) -> Result<bool, ureq::Error> {
+    let response = ureq::get("https://api.bitbucket.org/2.0/user")
+        .header(
+            "Authorization",
+            format!(
+                "Basic {}",
+                base64_encode(&format!("{username}:{app_password}"))
+            ),
+        )
+        .call()?;
+
+    Ok(response.status().is_success())
+}
+
+/// Base64 encode a string for HTTP Basic auth.
+fn base64_encode(s: &str) -> String {
+    use base64::prelude::*;
+    BASE64_STANDARD.encode(s.as_bytes())
 }
 
 #[cfg(test)]
