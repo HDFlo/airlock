@@ -33,59 +33,18 @@ run: |
       exit 0
     fi
   elif [[ "$AIRLOCK_UPSTREAM_URL" == *"bitbucket.org"* ]]; then
-    BB_READY=false
-
-    # `bb workspace list` makes a live API call, so it validates credentials
-    # against Bitbucket — unlike `bb profile list` which only reads local config.
-    if command -v bb &>/dev/null && bb workspace list &>/dev/null 2>&1; then
-      BB_READY=true
-      echo "Bitbucket auth: using bb CLI session"
-    fi
-
-    if [[ "$BB_READY" != "true" ]]; then
-      if [[ -n "${BITBUCKET_TOKEN:-}" ]]; then
-        # Use curl config file to avoid exposing token in process list
-        # Note: Bearer tokens can't use netrc (netrc only supports Basic auth)
-        # The --config option with header directive works on all curl versions
-        CURL_CONFIG=$(mktemp)
-        chmod 600 "$CURL_CONFIG"
-        trap 'rm -f "$CURL_CONFIG"' EXIT
-        printf 'header = "Authorization: Bearer %s"\n' "$BITBUCKET_TOKEN" > "$CURL_CONFIG"
-        printf 'url = "https://api.bitbucket.org/2.0/user"\n' >> "$CURL_CONFIG"
-        printf 'silent\n' >> "$CURL_CONFIG"
-        printf 'show-error\n' >> "$CURL_CONFIG"
-        printf 'max-time = "5"\n' >> "$CURL_CONFIG"
-        if curl --config "$CURL_CONFIG" >/dev/null 2>&1; then
-          BB_READY=true
-          echo "Bitbucket auth: using BITBUCKET_TOKEN"
-        else
-          echo "error: BITBUCKET_TOKEN is set but failed validation against https://api.bitbucket.org/2.0/user" >&2
-          exit 1
-        fi
-      elif [[ -n "${BITBUCKET_USERNAME:-}" && -n "${BITBUCKET_APP_PASSWORD:-}" ]]; then
-        # Use a temp file to avoid exposing credentials in process list
-        NETRC_FILE=$(mktemp)
-        chmod 600 "$NETRC_FILE"
-        trap 'rm -f "$NETRC_FILE"' EXIT
-        printf 'machine api.bitbucket.org login %s password %s\n' "$BITBUCKET_USERNAME" "$BITBUCKET_APP_PASSWORD" > "$NETRC_FILE"
-        if curl -fsS --max-time 5 --netrc-file "$NETRC_FILE" "https://api.bitbucket.org/2.0/user" >/dev/null; then
-          BB_READY=true
-          echo "Bitbucket auth: using BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD"
-        else
-          echo "error: BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD are set but failed validation against https://api.bitbucket.org/2.0/user" >&2
-          exit 1
-        fi
-      fi
-    fi
-
-    if [[ "$BB_READY" != "true" ]]; then
-      echo "Skipping: Bitbucket Cloud auth is not configured. Use one of:"
-      echo "  1) bb profile create --name default --client-id <id> --client-secret <secret> --default"
-      echo "     (see https://github.com/gildas/bb for full profile setup instructions)"
-      echo "  2) BITBUCKET_TOKEN"
-      echo "  3) BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD"
+    # `bb profile which` checks if a default profile is configured (local-only,
+    # no API call) — equivalent to `gh auth status` / `glab auth status`.
+    if ! command -v bb &>/dev/null; then
+      echo "Skipping: 'bb' CLI is not installed. Install it from https://github.com/gildas/bb"
       exit 0
     fi
+    if ! bb profile which &>/dev/null 2>&1; then
+      echo "Skipping: no bb profile is configured. Run 'bb profile create' to set one up."
+      echo "See https://github.com/gildas/bb for authentication options."
+      exit 0
+    fi
+    echo "Bitbucket auth: bb profile is configured"
   else
     echo "Skipping: this provider is not supported for automatic pull request creation yet."
     exit 0
@@ -104,10 +63,7 @@ run: |
 
   - GitHub: gh CLI is installed and authenticated
   - GitLab: glab CLI is installed and authenticated
-  - Bitbucket Cloud:
-    - Preferred: bb CLI profile (gildas/bb) — validated via \`bb workspace list\`
-    - API fallback: BITBUCKET_TOKEN (Bearer token)
-    - API fallback: BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD (Basic auth)
+  - Bitbucket Cloud: bb CLI (gildas/bb) profile is configured
 
   ## Your Task
 

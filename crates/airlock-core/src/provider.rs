@@ -55,10 +55,6 @@ pub struct ProviderCheck {
     pub cli_installed: bool,
     pub cli_authenticated: bool,
     pub cli_name: Option<String>,
-    pub api_checked: bool,
-    pub api_authenticated: bool,
-    /// True if API validation failed due to network/timeout (credentials may be valid).
-    pub api_network_error: bool,
 }
 
 /// Detect the SCM provider from a remote URL.
@@ -78,13 +74,6 @@ pub fn detect_provider(url: &str) -> ScmProvider {
 }
 
 /// Check whether the CLI for a provider is installed and authenticated.
-///
-/// # Network Calls
-///
-/// This function makes a live HTTP request to validate API credentials for some
-/// providers (currently Bitbucket). The request has a 5-second timeout. Callers
-/// should be prepared for this blocking call and may want to show a progress
-/// indicator in interactive contexts.
 pub fn check_provider_setup(url: &str) -> ProviderCheck {
     let provider = detect_provider(url);
     let cli_name = provider.cli_tool().map(|s| s.to_string());
@@ -97,22 +86,11 @@ pub fn check_provider_setup(url: &str) -> ProviderCheck {
         false
     };
 
-    // Skip API check if CLI is already authenticated - no need to validate
-    // API credentials when we have a working CLI session
-    let (api_checked, api_authenticated, api_network_error) = if cli_authenticated {
-        (false, false, false)
-    } else {
-        check_api_authenticated(&provider)
-    };
-
     ProviderCheck {
         provider,
         cli_installed,
         cli_authenticated,
         cli_name,
-        api_checked,
-        api_authenticated,
-        api_network_error,
     }
 }
 
@@ -121,10 +99,11 @@ fn check_cli_authenticated(provider: &ScmProvider) -> bool {
     let (cmd, args) = match provider {
         ScmProvider::GitHub => ("gh", vec!["auth", "status"]),
         ScmProvider::GitLab => ("glab", vec!["auth", "status"]),
-        // bb CLI (gildas/bb) validates credentials by listing workspaces, which
-        // makes a real API call and fails if the profile credentials are invalid.
-        // `bb profile list` only lists locally-saved profiles without touching the API.
-        ScmProvider::Bitbucket => ("bb", vec!["workspace", "list"]),
+        // bb CLI (gildas/bb): `bb profile which` returns the current default profile
+        // name and exits non-zero when no profile has been configured. This is a
+        // local-only check (no API call) that simply confirms at least one profile
+        // is set up — equivalent to `gh auth status` / `glab auth status`.
+        ScmProvider::Bitbucket => ("bb", vec!["profile", "which"]),
         _ => return false,
     };
 
@@ -135,119 +114,6 @@ fn check_cli_authenticated(provider: &ScmProvider) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
-}
-
-/// Check provider API credentials from environment variables, when supported.
-///
-/// Returns `(api_checked, api_authenticated, api_network_error)` where:
-/// - `api_checked` indicates whether any credentials were found to validate
-/// - `api_authenticated` indicates whether the validation succeeded
-/// - `api_network_error` indicates whether validation failed due to network issues
-fn check_api_authenticated(provider: &ScmProvider) -> (bool, bool, bool) {
-    match provider {
-        ScmProvider::Bitbucket => check_bitbucket_api_authenticated(),
-        _ => (false, false, false),
-    }
-}
-
-/// Check Bitbucket API credentials from environment variables.
-///
-/// Checks credentials in order of preference:
-/// 1. `BITBUCKET_TOKEN` (Bearer token)
-/// 2. `BITBUCKET_USERNAME` + `BITBUCKET_APP_PASSWORD` (Basic auth)
-///
-/// Returns `(api_checked, api_authenticated, api_network_error)`. If one credential
-/// pair is set but empty, falls through to check the next pair. If a non-empty
-/// credential is tested but fails authentication, returns immediately rather than
-/// trying the next pair (the user explicitly configured that credential).
-fn check_bitbucket_api_authenticated() -> (bool, bool, bool) {
-    let token = std::env::var("BITBUCKET_TOKEN").ok();
-    let username = std::env::var("BITBUCKET_USERNAME").ok();
-    let app_password = std::env::var("BITBUCKET_APP_PASSWORD").ok();
-
-    // Try BITBUCKET_TOKEN first (if set and non-empty)
-    if let Some(token) = token {
-        let token = token.trim();
-        if !token.is_empty() {
-            // Token was found and non-empty - test it
-            return match validate_bitbucket_credentials(&format!("Bearer {token}")) {
-                CredentialValidation::Valid => (true, true, false),
-                CredentialValidation::Invalid => (true, false, false),
-                CredentialValidation::NetworkError => (true, false, true),
-            };
-        }
-        // Token was empty, continue to next method
-    }
-
-    // Try BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD (if both set and non-empty)
-    if let (Some(username), Some(app_password)) = (username, app_password) {
-        let username = username.trim();
-        let app_password = app_password.trim();
-        if !username.is_empty() && !app_password.is_empty() {
-            // Both credentials were found and non-empty - test them
-            let encoded = base64_encode(&format!("{username}:{app_password}"));
-            return match validate_bitbucket_credentials(&format!("Basic {encoded}")) {
-                CredentialValidation::Valid => (true, true, false),
-                CredentialValidation::Invalid => (true, false, false),
-                CredentialValidation::NetworkError => (true, false, true),
-            };
-        }
-    }
-
-    (false, false, false)
-}
-
-/// Result of validating Bitbucket credentials.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CredentialValidation {
-    /// Credentials are valid.
-    Valid,
-    /// Credentials are invalid (401 Unauthorized or similar).
-    Invalid,
-    /// Network/timeout error - could not reach the API.
-    NetworkError,
-}
-
-/// Validate Bitbucket credentials by making an API request.
-///
-/// Uses ureq to avoid exposing credentials in the process argument list.
-/// The `auth_header` should be a complete Authorization header value (e.g., "Bearer <token>"
-/// or "Basic <base64-encoded-credentials>").
-///
-/// Returns the validation result indicating whether credentials are valid, invalid,
-/// or could not be verified due to network issues.
-fn validate_bitbucket_credentials(auth_header: &str) -> CredentialValidation {
-    let agent = ureq::config::Config::builder()
-        .timeout_global(Some(std::time::Duration::from_secs(5)))
-        .build()
-        .new_agent();
-
-    let result = agent
-        .get("https://api.bitbucket.org/2.0/user")
-        .header("Authorization", auth_header)
-        .call();
-
-    match result {
-        Ok(_) => CredentialValidation::Valid,
-        // 401 Unauthorized - credentials are invalid
-        Err(ureq::Error::StatusCode(401)) => CredentialValidation::Invalid,
-        // 403 Forbidden - credentials might be valid but lack permissions, treat as invalid
-        Err(ureq::Error::StatusCode(403)) => CredentialValidation::Invalid,
-        // 429 Rate Limited - transient error, treat as network error
-        Err(ureq::Error::StatusCode(429)) => CredentialValidation::NetworkError,
-        // 5xx Server errors - transient, treat as network error
-        Err(ureq::Error::StatusCode(code)) if code >= 500 => CredentialValidation::NetworkError,
-        // Other 4xx errors - likely auth-related, treat as invalid
-        Err(ureq::Error::StatusCode(_)) => CredentialValidation::Invalid,
-        // Network/timeout errors
-        Err(_) => CredentialValidation::NetworkError,
-    }
-}
-
-/// Base64 encode a string for HTTP Basic auth.
-fn base64_encode(s: &str) -> String {
-    use base64::prelude::*;
-    BASE64_STANDARD.encode(s.as_bytes())
 }
 
 #[cfg(test)]
@@ -373,8 +239,6 @@ mod tests {
         assert!(!check.cli_installed);
         assert!(!check.cli_authenticated);
         assert!(check.cli_name.is_none());
-        assert!(!check.api_checked);
-        assert!(!check.api_authenticated);
     }
 
     #[test]
@@ -385,23 +249,21 @@ mod tests {
         assert_eq!(check.cli_name.as_deref(), Some("bb"));
     }
 
-    /// Regression test: `bb profile list` only shows locally-saved profiles and
-    /// does NOT validate credentials against the Bitbucket API.  The correct
-    /// command is `bb workspace list`, which makes a live API call and fails when
-    /// the stored credentials are rejected by Bitbucket.
+    /// Regression test: the Bitbucket CLI auth check must use `bb profile which`,
+    /// which exits non-zero when no profile is configured (local-only, no API call).
+    /// This is the direct equivalent of `gh auth status` / `glab auth status`.
+    ///
+    /// Do NOT revert to:
+    /// - `bb profile list`  — exits 0 even with no profiles configured
+    /// - `bb workspace list` — makes a live API call (unnecessary overhead)
+    /// - `bb auth status`   — command does not exist in gildas/bb
     #[test]
-    fn bitbucket_cli_auth_uses_workspace_list() {
-        // We can't easily call check_cli_authenticated in isolation, but we can
-        // verify the code path builds without referencing the wrong sub-command by
-        // ensuring "workspace" appears in our Bitbucket branch and NOT "profile".
-        // Any future refactor that accidentally reverts to `bb profile list` will
-        // therefore fail this test.
+    fn bitbucket_cli_auth_uses_profile_which() {
         let src = include_str!("provider.rs");
-        // The auth-check match arm for Bitbucket must use "workspace"
         assert!(
-            src.contains(r#"Bitbucket => ("bb", vec!["workspace", "list"])"#),
-            "Bitbucket CLI auth check must use `bb workspace list` (not `bb profile list`) \
-             to actually validate credentials against the API",
+            src.contains(r#"Bitbucket => ("bb", vec!["profile", "which"])"#),
+            "Bitbucket CLI auth check must use `bb profile which` \
+             (local check for configured profile, no API call)",
         );
     }
 }

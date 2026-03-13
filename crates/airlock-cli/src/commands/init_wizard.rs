@@ -124,27 +124,24 @@ fn print_provider_check(check: &ProviderCheck) {
                     "  \u{2713} {} is installed and authenticated \u{2014} pull request creation is ready",
                     cli
                 );
-            } else if check.provider == ScmProvider::Bitbucket
-                && check.api_checked
-                && check.api_authenticated
-            {
-                println!(
-                    "  ✓ Bitbucket API credentials are valid — pull request creation is ready"
-                );
             } else if check.cli_installed {
+                // CLI is installed but no profile / session is configured.
                 let auth_cmd = match check.provider {
                     ScmProvider::GitHub => "gh auth login",
                     ScmProvider::GitLab => "glab auth login",
-                    ScmProvider::Bitbucket => "bb auth save",
-                    // For any future provider with a CLI, use a generic pattern
-                    _ => &format!("{} auth login", cli),
+                    // bb CLI (gildas/bb): `bb profile create` is the equivalent of
+                    // `gh auth login` — it stores credentials for future commands.
+                    // See https://github.com/gildas/bb for full options.
+                    ScmProvider::Bitbucket => "bb profile create",
+                    // AzureDevOps and Unknown are handled above and never reach here.
+                    _ => unreachable!("providers without a CLI tool are excluded in the outer match arm"),
                 };
-                println!("  ! {} is installed but not authenticated", cli);
+                println!("  ! {} is installed but no profile is configured", cli);
                 println!("    Airlock won't be able to create pull requests automatically.");
                 println!("    Everything else will work normally.");
-                println!("    Run `{}` to authenticate.", auth_cmd);
+                println!("    Run `{}` to set one up.", auth_cmd);
                 if check.provider == ScmProvider::Bitbucket {
-                    println!("    Or set BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD.");
+                    println!("    See https://github.com/gildas/bb for all authentication options.");
                 }
             } else {
                 let hint = check.provider.install_hint().unwrap_or("");
@@ -152,21 +149,6 @@ fn print_provider_check(check: &ProviderCheck) {
                 println!("    Airlock won't be able to create pull requests automatically.");
                 println!("    Everything else will work normally.");
                 println!("    Install: {}", hint);
-                if check.provider == ScmProvider::Bitbucket {
-                    if check.api_network_error {
-                        println!(
-                            "    Could not reach Bitbucket API to validate credentials. Check your network connection."
-                        );
-                    } else if check.api_checked && !check.api_authenticated {
-                        println!(
-                            "    BITBUCKET credentials were found but failed validation against Bitbucket API."
-                        );
-                    } else {
-                        println!(
-                            "    Fallback: set BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD."
-                        );
-                    }
-                }
             }
         }
     }
