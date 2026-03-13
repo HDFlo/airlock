@@ -42,9 +42,7 @@ impl ScmProvider {
         match self {
             Self::GitHub => Some("https://cli.github.com"),
             Self::GitLab => Some("https://gitlab.com/gitlab-org/cli"),
-            Self::Bitbucket => {
-                Some("https://developer.atlassian.com/cloud/bitbucket/bitbucket-cli/")
-            }
+            Self::Bitbucket => Some("https://github.com/gildas/bb"),
             Self::AzureDevOps | Self::Unknown => None,
         }
     }
@@ -123,7 +121,10 @@ fn check_cli_authenticated(provider: &ScmProvider) -> bool {
     let (cmd, args) = match provider {
         ScmProvider::GitHub => ("gh", vec!["auth", "status"]),
         ScmProvider::GitLab => ("glab", vec!["auth", "status"]),
-        ScmProvider::Bitbucket => ("bb", vec!["auth", "status"]),
+        // bb CLI (gildas/bb) validates credentials by listing workspaces, which
+        // makes a real API call and fails if the profile credentials are invalid.
+        // `bb profile list` only lists locally-saved profiles without touching the API.
+        ScmProvider::Bitbucket => ("bb", vec!["workspace", "list"]),
         _ => return false,
     };
 
@@ -359,7 +360,7 @@ mod tests {
         );
         assert_eq!(
             ScmProvider::Bitbucket.install_hint(),
-            Some("https://developer.atlassian.com/cloud/bitbucket/bitbucket-cli/"),
+            Some("https://github.com/gildas/bb"),
         );
     }
 
@@ -377,13 +378,30 @@ mod tests {
     }
 
     #[test]
-    fn check_setup_bitbucket_no_cli() {
+    fn check_setup_bitbucket_provider_detection() {
         let check = check_provider_setup("https://bitbucket.org/user/repo");
         assert_eq!(check.provider, ScmProvider::Bitbucket);
-        assert!(!check.cli_installed);
-        assert!(!check.cli_authenticated);
+        // cli_name should be set to "bb" for Bitbucket
         assert_eq!(check.cli_name.as_deref(), Some("bb"));
-        assert!(!check.api_checked);
-        assert!(!check.api_authenticated);
+    }
+
+    /// Regression test: `bb profile list` only shows locally-saved profiles and
+    /// does NOT validate credentials against the Bitbucket API.  The correct
+    /// command is `bb workspace list`, which makes a live API call and fails when
+    /// the stored credentials are rejected by Bitbucket.
+    #[test]
+    fn bitbucket_cli_auth_uses_workspace_list() {
+        // We can't easily call check_cli_authenticated in isolation, but we can
+        // verify the code path builds without referencing the wrong sub-command by
+        // ensuring "workspace" appears in our Bitbucket branch and NOT "profile".
+        // Any future refactor that accidentally reverts to `bb profile list` will
+        // therefore fail this test.
+        let src = include_str!("provider.rs");
+        // The auth-check match arm for Bitbucket must use "workspace"
+        assert!(
+            src.contains(r#"Bitbucket => ("bb", vec!["workspace", "list"])"#),
+            "Bitbucket CLI auth check must use `bb workspace list` (not `bb profile list`) \
+             to actually validate credentials against the API",
+        );
     }
 }

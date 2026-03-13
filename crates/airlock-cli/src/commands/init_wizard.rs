@@ -135,8 +135,9 @@ fn print_provider_check(check: &ProviderCheck) {
                 let auth_cmd = match check.provider {
                     ScmProvider::GitHub => "gh auth login",
                     ScmProvider::GitLab => "glab auth login",
-                    ScmProvider::Bitbucket => "bb auth login",
-                    _ => unreachable!(),
+                    ScmProvider::Bitbucket => "bb auth save",
+                    // For any future provider with a CLI, use a generic pattern
+                    _ => &format!("{} auth login", cli),
                 };
                 println!("  ! {} is installed but not authenticated", cli);
                 println!("    Airlock won't be able to create pull requests automatically.");
