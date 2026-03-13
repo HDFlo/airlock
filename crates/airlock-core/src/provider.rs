@@ -219,8 +219,17 @@ fn validate_bitbucket_credentials(auth_header: &str) -> CredentialValidation {
 
     match result {
         Ok(_) => CredentialValidation::Valid,
+        // 401 Unauthorized - credentials are invalid
         Err(ureq::Error::StatusCode(401)) => CredentialValidation::Invalid,
+        // 403 Forbidden - credentials might be valid but lack permissions, treat as invalid
+        Err(ureq::Error::StatusCode(403)) => CredentialValidation::Invalid,
+        // 429 Rate Limited - transient error, treat as network error
+        Err(ureq::Error::StatusCode(429)) => CredentialValidation::NetworkError,
+        // 5xx Server errors - transient, treat as network error
+        Err(ureq::Error::StatusCode(code)) if code >= 500 => CredentialValidation::NetworkError,
+        // Other 4xx errors - likely auth-related, treat as invalid
         Err(ureq::Error::StatusCode(_)) => CredentialValidation::Invalid,
+        // Network/timeout errors
         Err(_) => CredentialValidation::NetworkError,
     }
 }
