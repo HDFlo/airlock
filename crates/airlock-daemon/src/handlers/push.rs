@@ -252,6 +252,14 @@ pub async fn process_coalesced_push(
                             }
                         }
                     }
+
+                    // Emit RunSuperseded events so the frontend updates superseded runs
+                    for superseded_run in &superseded {
+                        ctx.emit(AirlockEvent::RunSuperseded {
+                            repo_id: superseded_run.repo_id.clone(),
+                            run_id: superseded_run.id.clone(),
+                        });
+                    }
                 }
             }
             Err(e) => {
@@ -635,11 +643,9 @@ pub async fn process_coalesced_push(
                         }
                     }
                     for remaining in &all_runs[run_idx..] {
-                        ctx.emit(AirlockEvent::RunCompleted {
+                        ctx.emit(AirlockEvent::RunSuperseded {
                             repo_id: remaining.repo_id.clone(),
                             run_id: remaining.id.clone(),
-                            success: false,
-                            branch: remaining.branch.clone(),
                         });
                     }
                     break;
