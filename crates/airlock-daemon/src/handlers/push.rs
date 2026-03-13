@@ -252,6 +252,14 @@ pub async fn process_coalesced_push(
                             }
                         }
                     }
+
+                    // Emit RunSuperseded events so the frontend updates superseded runs
+                    for superseded_run in &superseded {
+                        ctx.emit(AirlockEvent::RunSuperseded {
+                            repo_id: superseded_run.repo_id.clone(),
+                            run_id: superseded_run.id.clone(),
+                        });
+                    }
                 }
             }
             Err(e) => {
@@ -635,11 +643,9 @@ pub async fn process_coalesced_push(
                         }
                     }
                     for remaining in &all_runs[run_idx..] {
-                        ctx.emit(AirlockEvent::RunCompleted {
+                        ctx.emit(AirlockEvent::RunSuperseded {
                             repo_id: remaining.repo_id.clone(),
                             run_id: remaining.id.clone(),
-                            success: false,
-                            branch: remaining.branch.clone(),
                         });
                     }
                     break;
@@ -763,7 +769,7 @@ async fn detect_missed_pushes_for_repo(
 ) -> Result<usize, String> {
     // List push marker refs — only branches the user actually pushed
     let markers = git::list_push_markers(&repo.gate_path)
-        .map_err(|e| format!("Failed to list push markers: {}", e))?;
+        .map_err(|e| format!("Failed to list push markers: {e}"))?;
 
     if markers.is_empty() {
         return Ok(0);
