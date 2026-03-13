@@ -13,7 +13,7 @@ run: |
     exit 0
   fi
 
-  # Detect platform and check CLI availability
+  # Detect platform and check authentication setup
   if [[ "$AIRLOCK_UPSTREAM_URL" == *"github.com"* ]]; then
     if ! command -v gh &>/dev/null; then
       echo "Skipping: 'gh' CLI is not installed. Install it from https://cli.github.com"
@@ -32,6 +32,19 @@ run: |
       echo "Skipping: 'glab' CLI is not authenticated. Run 'glab auth login' to authenticate."
       exit 0
     fi
+  elif [[ "$AIRLOCK_UPSTREAM_URL" == *"bitbucket.org"* ]]; then
+    # `bb profile which` checks if a default profile is configured (local-only,
+    # no API call) — equivalent to `gh auth status` / `glab auth status`.
+    if ! command -v bb &>/dev/null; then
+      echo "Skipping: 'bb' CLI is not installed. Install it from https://github.com/gildas/bb"
+      exit 0
+    fi
+    if ! bb profile which &>/dev/null 2>&1; then
+      echo "Skipping: no bb profile is configured. Run 'bb profile create' to set one up."
+      echo "See https://github.com/gildas/bb for authentication options."
+      exit 0
+    fi
+    echo "Bitbucket auth: bb profile is configured"
   else
     echo "Skipping: this provider is not supported for automatic pull request creation yet."
     exit 0
@@ -46,11 +59,18 @@ run: |
   **Branch:** $BRANCH
   **Artifacts:** $AIRLOCK_ARTIFACTS
 
+  ## Authentication Methods Available
+
+  - GitHub: gh CLI is installed and authenticated
+  - GitLab: glab CLI is installed and authenticated
+  - Bitbucket Cloud: bb CLI (gildas/bb) profile is configured
+
   ## Your Task
 
   1. **Identify the platform** - Based on the upstream URL, determine the Git hosting platform:
      - GitHub (github.com)
      - GitLab (gitlab.com or self-hosted)
+     - Bitbucket Cloud (bitbucket.org)
      - Other platforms
 
   2. **Detect the default branch** - Figure out the target branch (usually main or master)
@@ -58,14 +78,15 @@ run: |
   3. **Inspect artifacts** - Look for existing artifacts to see useful information that can be put in PR title/description
 
   4. **Create the PR/MR** - Use the appropriate CLI or API to create the pull/merge request
+     - For Bitbucket Cloud, prefer bb CLI when authenticated; otherwise use API credentials from environment.
 
   5. **Return the result** - Provide the PR/MR URL if successful, or explain the error
 
   ## PR/MR Content
-  - Check if \`\$AIRLOCK_ARTIFACTS/description.json\` exists. If it does, use it:
+  - Check if \`$AIRLOCK_ARTIFACTS/description.json\` exists. If it does, use it:
     - Use the \`title\` field as the PR title
     - Use the \`body\` field as the basis for the PR description
-    - If a \`mermaid_diagram\` field is present, include it in the PR description as a fenced mermaid code block (\\\`\\\`\\\`mermaid ... \\\`\\\`\\\`). You MUST strip all Mermaid styling before including it: remove all \`classDef\` lines, \`class ... subgraphStyle\` lines, and \`:::className\` suffixes from nodes. GitHub/GitLab render Mermaid with their own dark/light theming, so custom styles break that.
+    - If a \`mermaid_diagram\` field is present, include it in the PR description as a fenced mermaid code block (\\\`\\\`\\\`mermaid ... \\\`\\\`\\\`). You MUST strip all Mermaid styling before including it: remove all \`classDef\` lines, \`class ... subgraphStyle\` lines, and \`:::className\` suffixes from nodes. GitHub/GitLab/Bitbucket render Mermaid with their own dark/light theming, so custom styles break that.
   - If description.json does not exist, generate a title and description from the branch name and commit history
   - Do NOT add a signature for who created the PR/MR
   - The description should have these sections:

@@ -32,7 +32,8 @@ impl ScmProvider {
         match self {
             Self::GitHub => Some("gh"),
             Self::GitLab => Some("glab"),
-            Self::Bitbucket | Self::AzureDevOps | Self::Unknown => None,
+            Self::Bitbucket => Some("bb"),
+            Self::AzureDevOps | Self::Unknown => None,
         }
     }
 
@@ -41,7 +42,8 @@ impl ScmProvider {
         match self {
             Self::GitHub => Some("https://cli.github.com"),
             Self::GitLab => Some("https://gitlab.com/gitlab-org/cli"),
-            Self::Bitbucket | Self::AzureDevOps | Self::Unknown => None,
+            Self::Bitbucket => Some("https://github.com/gildas/bb"),
+            Self::AzureDevOps | Self::Unknown => None,
         }
     }
 }
@@ -97,6 +99,11 @@ fn check_cli_authenticated(provider: &ScmProvider) -> bool {
     let (cmd, args) = match provider {
         ScmProvider::GitHub => ("gh", vec!["auth", "status"]),
         ScmProvider::GitLab => ("glab", vec!["auth", "status"]),
+        // bb CLI (gildas/bb): `bb profile which` returns the current default profile
+        // name and exits non-zero when no profile has been configured. This is a
+        // local-only check (no API call) that simply confirms at least one profile
+        // is set up — equivalent to `gh auth status` / `glab auth status`.
+        ScmProvider::Bitbucket => ("bb", vec!["profile", "which"]),
         _ => return false,
     };
 
@@ -202,7 +209,7 @@ mod tests {
     fn cli_tools() {
         assert_eq!(ScmProvider::GitHub.cli_tool(), Some("gh"));
         assert_eq!(ScmProvider::GitLab.cli_tool(), Some("glab"));
-        assert_eq!(ScmProvider::Bitbucket.cli_tool(), None);
+        assert_eq!(ScmProvider::Bitbucket.cli_tool(), Some("bb"));
         assert_eq!(ScmProvider::AzureDevOps.cli_tool(), None);
         assert_eq!(ScmProvider::Unknown.cli_tool(), None);
     }
@@ -217,7 +224,10 @@ mod tests {
             ScmProvider::GitLab.install_hint(),
             Some("https://gitlab.com/gitlab-org/cli"),
         );
-        assert_eq!(ScmProvider::Bitbucket.install_hint(), None);
+        assert_eq!(
+            ScmProvider::Bitbucket.install_hint(),
+            Some("https://github.com/gildas/bb"),
+        );
     }
 
     // --- check_provider_setup ---
@@ -232,11 +242,28 @@ mod tests {
     }
 
     #[test]
-    fn check_setup_bitbucket_no_cli() {
+    fn check_setup_bitbucket_provider_detection() {
         let check = check_provider_setup("https://bitbucket.org/user/repo");
         assert_eq!(check.provider, ScmProvider::Bitbucket);
-        assert!(!check.cli_installed);
-        assert!(!check.cli_authenticated);
-        assert!(check.cli_name.is_none());
+        // cli_name should be set to "bb" for Bitbucket
+        assert_eq!(check.cli_name.as_deref(), Some("bb"));
+    }
+
+    /// Regression test: the Bitbucket CLI auth check must use `bb profile which`,
+    /// which exits non-zero when no profile is configured (local-only, no API call).
+    /// This is the direct equivalent of `gh auth status` / `glab auth status`.
+    ///
+    /// Do NOT revert to:
+    /// - `bb profile list`  — exits 0 even with no profiles configured
+    /// - `bb workspace list` — makes a live API call (unnecessary overhead)
+    /// - `bb auth status`   — command does not exist in gildas/bb
+    #[test]
+    fn bitbucket_cli_auth_uses_profile_which() {
+        let src = include_str!("provider.rs");
+        assert!(
+            src.contains(r#"Bitbucket => ("bb", vec!["profile", "which"])"#),
+            "Bitbucket CLI auth check must use `bb profile which` \
+             (local check for configured profile, no API call)",
+        );
     }
 }

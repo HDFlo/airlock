@@ -108,7 +108,7 @@ fn print_provider_check(check: &ProviderCheck) {
     println!("Detected provider: {}", check.provider.display_name());
 
     match check.provider {
-        ScmProvider::Bitbucket | ScmProvider::AzureDevOps | ScmProvider::Unknown => {
+        ScmProvider::AzureDevOps | ScmProvider::Unknown => {
             println!(
                 "  ! {} is not supported by Airlock at the moment.",
                 check.provider.display_name()
@@ -125,15 +125,28 @@ fn print_provider_check(check: &ProviderCheck) {
                     cli
                 );
             } else if check.cli_installed {
+                // CLI is installed but no profile / session is configured.
                 let auth_cmd = match check.provider {
                     ScmProvider::GitHub => "gh auth login",
                     ScmProvider::GitLab => "glab auth login",
-                    _ => unreachable!(),
+                    // bb CLI (gildas/bb): `bb profile create` is the equivalent of
+                    // `gh auth login` — it stores credentials for future commands.
+                    // See https://github.com/gildas/bb for full options.
+                    ScmProvider::Bitbucket => "bb profile create",
+                    // AzureDevOps and Unknown are handled above and never reach here.
+                    _ => unreachable!(
+                        "providers without a CLI tool are excluded in the outer match arm"
+                    ),
                 };
-                println!("  ! {} is installed but not authenticated", cli);
+                println!("  ! {} is installed but no profile is configured", cli);
                 println!("    Airlock won't be able to create pull requests automatically.");
                 println!("    Everything else will work normally.");
-                println!("    Run `{}` to authenticate.", auth_cmd);
+                println!("    Run `{}` to set one up.", auth_cmd);
+                if check.provider == ScmProvider::Bitbucket {
+                    println!(
+                        "    See https://github.com/gildas/bb for all authentication options."
+                    );
+                }
             } else {
                 let hint = check.provider.install_hint().unwrap_or("");
                 println!("  ! {} is not installed", cli);
