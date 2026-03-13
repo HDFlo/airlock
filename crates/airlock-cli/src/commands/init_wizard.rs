@@ -134,14 +134,18 @@ fn print_provider_check(check: &ProviderCheck) {
                     // See https://github.com/gildas/bb for full options.
                     ScmProvider::Bitbucket => "bb profile create",
                     // AzureDevOps and Unknown are handled above and never reach here.
-                    _ => unreachable!("providers without a CLI tool are excluded in the outer match arm"),
+                    _ => unreachable!(
+                        "providers without a CLI tool are excluded in the outer match arm"
+                    ),
                 };
                 println!("  ! {} is installed but no profile is configured", cli);
                 println!("    Airlock won't be able to create pull requests automatically.");
                 println!("    Everything else will work normally.");
                 println!("    Run `{}` to set one up.", auth_cmd);
                 if check.provider == ScmProvider::Bitbucket {
-                    println!("    See https://github.com/gildas/bb for all authentication options.");
+                    println!(
+                        "    See https://github.com/gildas/bb for all authentication options."
+                    );
                 }
             } else {
                 let hint = check.provider.install_hint().unwrap_or("");
