@@ -99,7 +99,13 @@ pub fn check_provider_setup(url: &str) -> ProviderCheck {
         false
     };
 
-    let (api_checked, api_authenticated, api_network_error) = check_api_authenticated(&provider);
+    // Skip API check if CLI is already authenticated - no need to validate
+    // API credentials when we have a working CLI session
+    let (api_checked, api_authenticated, api_network_error) = if cli_authenticated {
+        (false, false, false)
+    } else {
+        check_api_authenticated(&provider)
+    };
 
     ProviderCheck {
         provider,
@@ -160,7 +166,8 @@ fn check_bitbucket_api_authenticated() -> (bool, bool, bool) {
 
     // Try BITBUCKET_TOKEN first (if set and non-empty)
     if let Some(token) = token {
-        if !token.trim().is_empty() {
+        let token = token.trim();
+        if !token.is_empty() {
             // Token was found and non-empty - test it
             return match validate_bitbucket_credentials(&format!("Bearer {token}")) {
                 CredentialValidation::Valid => (true, true, false),
@@ -173,7 +180,9 @@ fn check_bitbucket_api_authenticated() -> (bool, bool, bool) {
 
     // Try BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD (if both set and non-empty)
     if let (Some(username), Some(app_password)) = (username, app_password) {
-        if !username.trim().is_empty() && !app_password.trim().is_empty() {
+        let username = username.trim();
+        let app_password = app_password.trim();
+        if !username.is_empty() && !app_password.is_empty() {
             // Both credentials were found and non-empty - test them
             let encoded = base64_encode(&format!("{username}:{app_password}"));
             return match validate_bitbucket_credentials(&format!("Basic {encoded}")) {

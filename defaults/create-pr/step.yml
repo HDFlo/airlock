@@ -55,7 +55,6 @@ run: |
           echo "error: BITBUCKET_TOKEN is set but failed validation against https://api.bitbucket.org/2.0/user" >&2
           exit 1
         fi
-        rm -f "$HEADER_FILE"
       elif [[ -n "${BITBUCKET_USERNAME:-}" && -n "${BITBUCKET_APP_PASSWORD:-}" ]]; then
         # Use a temp file to avoid exposing credentials in process list
         NETRC_FILE=$(mktemp)
@@ -69,7 +68,6 @@ run: |
           echo "error: BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD are set but failed validation against https://api.bitbucket.org/2.0/user" >&2
           exit 1
         fi
-        rm -f "$NETRC_FILE"
       fi
     fi
 
