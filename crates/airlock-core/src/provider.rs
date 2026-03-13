@@ -59,6 +59,8 @@ pub struct ProviderCheck {
     pub cli_name: Option<String>,
     pub api_checked: bool,
     pub api_authenticated: bool,
+    /// True if API validation failed due to network/timeout (credentials may be valid).
+    pub api_network_error: bool,
 }
 
 /// Detect the SCM provider from a remote URL.
@@ -97,7 +99,7 @@ pub fn check_provider_setup(url: &str) -> ProviderCheck {
         false
     };
 
-    let (api_checked, api_authenticated) = check_api_authenticated(&provider);
+    let (api_checked, api_authenticated, api_network_error) = check_api_authenticated(&provider);
 
     ProviderCheck {
         provider,
@@ -106,6 +108,7 @@ pub fn check_provider_setup(url: &str) -> ProviderCheck {
         cli_name,
         api_checked,
         api_authenticated,
+        api_network_error,
     }
 }
 
@@ -129,13 +132,14 @@ fn check_cli_authenticated(provider: &ScmProvider) -> bool {
 
 /// Check provider API credentials from environment variables, when supported.
 ///
-/// Returns `(api_checked, api_authenticated)` where `api_checked` indicates whether
-/// any credentials were found to validate, and `api_authenticated` indicates whether
-/// the validation succeeded.
-fn check_api_authenticated(provider: &ScmProvider) -> (bool, bool) {
+/// Returns `(api_checked, api_authenticated, api_network_error)` where:
+/// - `api_checked` indicates whether any credentials were found to validate
+/// - `api_authenticated` indicates whether the validation succeeded
+/// - `api_network_error` indicates whether validation failed due to network issues
+fn check_api_authenticated(provider: &ScmProvider) -> (bool, bool, bool) {
     match provider {
         ScmProvider::Bitbucket => check_bitbucket_api_authenticated(),
-        _ => (false, false),
+        _ => (false, false, false),
     }
 }
 
@@ -145,11 +149,11 @@ fn check_api_authenticated(provider: &ScmProvider) -> (bool, bool) {
 /// 1. `BITBUCKET_TOKEN` (Bearer token)
 /// 2. `BITBUCKET_USERNAME` + `BITBUCKET_APP_PASSWORD` (Basic auth)
 ///
-/// Returns `(api_checked, api_authenticated)`. If one credential pair is set but
-/// empty, falls through to check the next pair. If a non-empty credential is
-/// tested but fails authentication, returns `(true, false)` immediately rather
-/// than trying the next pair (the user explicitly configured that credential).
-fn check_bitbucket_api_authenticated() -> (bool, bool) {
+/// Returns `(api_checked, api_authenticated, api_network_error)`. If one credential
+/// pair is set but empty, falls through to check the next pair. If a non-empty
+/// credential is tested but fails authentication, returns immediately rather than
+/// trying the next pair (the user explicitly configured that credential).
+fn check_bitbucket_api_authenticated() -> (bool, bool, bool) {
     let token = std::env::var("BITBUCKET_TOKEN").ok();
     let username = std::env::var("BITBUCKET_USERNAME").ok();
     let app_password = std::env::var("BITBUCKET_APP_PASSWORD").ok();
@@ -158,11 +162,10 @@ fn check_bitbucket_api_authenticated() -> (bool, bool) {
     if let Some(token) = token {
         if !token.trim().is_empty() {
             // Token was found and non-empty - test it
-            return match validate_bitbucket_bearer_token(&token) {
-                Ok(CredentialValidation::Valid) => (true, true),
-                Ok(CredentialValidation::Invalid) => (true, false),
-                Ok(CredentialValidation::NetworkError) => (true, false),
-                Err(_) => (true, false), // Should not happen, but handle it
+            return match validate_bitbucket_credentials(&format!("Bearer {token}")) {
+                CredentialValidation::Valid => (true, true, false),
+                CredentialValidation::Invalid => (true, false, false),
+                CredentialValidation::NetworkError => (true, false, true),
             };
         }
         // Token was empty, continue to next method
@@ -172,19 +175,20 @@ fn check_bitbucket_api_authenticated() -> (bool, bool) {
     if let (Some(username), Some(app_password)) = (username, app_password) {
         if !username.trim().is_empty() && !app_password.trim().is_empty() {
             // Both credentials were found and non-empty - test them
-            return match validate_bitbucket_basic_auth(&username, &app_password) {
-                Ok(CredentialValidation::Valid) => (true, true),
-                Ok(CredentialValidation::Invalid) => (true, false),
-                Ok(CredentialValidation::NetworkError) => (true, false),
-                Err(_) => (true, false), // Should not happen, but handle it
+            let encoded = base64_encode(&format!("{username}:{app_password}"));
+            return match validate_bitbucket_credentials(&format!("Basic {encoded}")) {
+                CredentialValidation::Valid => (true, true, false),
+                CredentialValidation::Invalid => (true, false, false),
+                CredentialValidation::NetworkError => (true, false, true),
             };
         }
     }
 
-    (false, false)
+    (false, false, false)
 }
 
 /// Result of validating Bitbucket credentials.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CredentialValidation {
     /// Credentials are valid.
     Valid,
@@ -194,39 +198,15 @@ enum CredentialValidation {
     NetworkError,
 }
 
-/// Validate a Bitbucket Bearer token by making an API request.
-///
-/// Uses ureq to avoid exposing the token in the process argument list.
-/// Returns `Ok(Valid)` if authenticated, `Ok(Invalid)` if credentials are rejected,
-/// or `Ok(NetworkError)` if the request failed due to network/timeout issues.
-fn validate_bitbucket_bearer_token(token: &str) -> Result<CredentialValidation, ureq::Error> {
-    let agent = ureq::config::Config::builder()
-        .timeout_global(Some(std::time::Duration::from_secs(5)))
-        .build()
-        .new_agent();
-
-    let result = agent
-        .get("https://api.bitbucket.org/2.0/user")
-        .header("Authorization", format!("Bearer {token}"))
-        .call();
-
-    match result {
-        Ok(_) => Ok(CredentialValidation::Valid),
-        Err(ureq::Error::StatusCode(401)) => Ok(CredentialValidation::Invalid),
-        Err(ureq::Error::StatusCode(_)) => Ok(CredentialValidation::Invalid),
-        Err(_) => Ok(CredentialValidation::NetworkError),
-    }
-}
-
-/// Validate Bitbucket Basic auth credentials by making an API request.
+/// Validate Bitbucket credentials by making an API request.
 ///
 /// Uses ureq to avoid exposing credentials in the process argument list.
-/// Returns `Ok(Valid)` if authenticated, `Ok(Invalid)` if credentials are rejected,
-/// or `Ok(NetworkError)` if the request failed due to network/timeout issues.
-fn validate_bitbucket_basic_auth(
-    username: &str,
-    app_password: &str,
-) -> Result<CredentialValidation, ureq::Error> {
+/// The `auth_header` should be a complete Authorization header value (e.g., "Bearer <token>"
+/// or "Basic <base64-encoded-credentials>").
+///
+/// Returns the validation result indicating whether credentials are valid, invalid,
+/// or could not be verified due to network issues.
+fn validate_bitbucket_credentials(auth_header: &str) -> CredentialValidation {
     let agent = ureq::config::Config::builder()
         .timeout_global(Some(std::time::Duration::from_secs(5)))
         .build()
@@ -234,20 +214,14 @@ fn validate_bitbucket_basic_auth(
 
     let result = agent
         .get("https://api.bitbucket.org/2.0/user")
-        .header(
-            "Authorization",
-            format!(
-                "Basic {}",
-                base64_encode(&format!("{username}:{app_password}"))
-            ),
-        )
+        .header("Authorization", auth_header)
         .call();
 
     match result {
-        Ok(_) => Ok(CredentialValidation::Valid),
-        Err(ureq::Error::StatusCode(401)) => Ok(CredentialValidation::Invalid),
-        Err(ureq::Error::StatusCode(_)) => Ok(CredentialValidation::Invalid),
-        Err(_) => Ok(CredentialValidation::NetworkError),
+        Ok(_) => CredentialValidation::Valid,
+        Err(ureq::Error::StatusCode(401)) => CredentialValidation::Invalid,
+        Err(ureq::Error::StatusCode(_)) => CredentialValidation::Invalid,
+        Err(_) => CredentialValidation::NetworkError,
     }
 }
 

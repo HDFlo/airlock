@@ -152,7 +152,11 @@ fn print_provider_check(check: &ProviderCheck) {
                 println!("    Everything else will work normally.");
                 println!("    Install: {}", hint);
                 if check.provider == ScmProvider::Bitbucket {
-                    if check.api_checked && !check.api_authenticated {
+                    if check.api_network_error {
+                        println!(
+                            "    Could not reach Bitbucket API to validate credentials. Check your network connection."
+                        );
+                    } else if check.api_checked && !check.api_authenticated {
                         println!(
                             "    BITBUCKET credentials were found but failed validation against Bitbucket API."
                         );

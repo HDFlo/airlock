@@ -42,21 +42,33 @@ run: |
 
     if [[ "$BB_READY" != "true" ]]; then
       if [[ -n "${BITBUCKET_TOKEN:-}" ]]; then
-        if curl -fsS --max-time 5 -H "Authorization: Bearer $BITBUCKET_TOKEN" "https://api.bitbucket.org/2.0/user" >/dev/null; then
+        # Use a temp file to avoid exposing token in process list
+        NETRC_FILE=$(mktemp)
+        chmod 600 "$NETRC_FILE"
+        trap 'rm -f "$NETRC_FILE"' EXIT
+        printf 'machine api.bitbucket.org login x password %s\n' "$BITBUCKET_TOKEN" > "$NETRC_FILE"
+        if curl -fsS --max-time 5 --netrc-file "$NETRC_FILE" "https://api.bitbucket.org/2.0/user" >/dev/null; then
           BB_READY=true
           echo "Bitbucket auth: using BITBUCKET_TOKEN"
         else
           echo "error: BITBUCKET_TOKEN is set but failed validation against https://api.bitbucket.org/2.0/user" >&2
           exit 1
         fi
+        rm -f "$NETRC_FILE"
       elif [[ -n "${BITBUCKET_USERNAME:-}" && -n "${BITBUCKET_APP_PASSWORD:-}" ]]; then
-        if curl -fsS --max-time 5 --user "$BITBUCKET_USERNAME:$BITBUCKET_APP_PASSWORD" "https://api.bitbucket.org/2.0/user" >/dev/null; then
+        # Use a temp file to avoid exposing credentials in process list
+        NETRC_FILE=$(mktemp)
+        chmod 600 "$NETRC_FILE"
+        trap 'rm -f "$NETRC_FILE"' EXIT
+        printf 'machine api.bitbucket.org login %s password %s\n' "$BITBUCKET_USERNAME" "$BITBUCKET_APP_PASSWORD" > "$NETRC_FILE"
+        if curl -fsS --max-time 5 --netrc-file "$NETRC_FILE" "https://api.bitbucket.org/2.0/user" >/dev/null; then
           BB_READY=true
           echo "Bitbucket auth: using BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD"
         else
           echo "error: BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD are set but failed validation against https://api.bitbucket.org/2.0/user" >&2
           exit 1
         fi
+        rm -f "$NETRC_FILE"
       fi
     fi
 
