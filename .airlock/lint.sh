@@ -48,7 +48,7 @@ if [[ ${#prettier_files[@]} -gt 0 || ${#eslint_files[@]} -gt 0 ]]; then
 
   if [[ ! -d node_modules ]]; then
     echo "Installing npm dependencies..."
-    npm_config_engine_strict=false npm ci
+    npm ci
   fi
 fi
 
