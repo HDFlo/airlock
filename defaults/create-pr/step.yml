@@ -14,6 +14,7 @@ run: |
   fi
 
   # Detect platform and check authentication setup
+  echo "Upstream URL: $AIRLOCK_UPSTREAM_URL"
   if [[ "$AIRLOCK_UPSTREAM_URL" == *"github.com"* ]]; then
     if ! command -v gh &>/dev/null; then
       echo "Skipping: 'gh' CLI is not installed. Install it from https://cli.github.com"
@@ -46,7 +47,7 @@ run: |
     fi
     echo "Bitbucket auth: bb profile is configured"
   else
-    echo "Skipping: this provider is not supported for automatic pull request creation yet."
+    echo "Skipping: this provider is not supported for automatic pull request creation yet. (upstream URL: $AIRLOCK_UPSTREAM_URL)"
     exit 0
   fi
 
