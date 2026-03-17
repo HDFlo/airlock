@@ -26,6 +26,11 @@
 ## [0.1.64](https://github.com/airlock-hq/airlock/compare/airlock-v0.1.63...airlock-v0.1.64) (2026-03-12)
 
 
+### Features
+
+* add Bitbucket Cloud support with CLI authentication and PR creation ([908d4c1](https://github.com/airlock-hq/airlock/commit/908d4c1edd96f737c3a24779dd2203a87667590b))
+
+
 ### Bug Fixes
 
 * show copy comments button in all states ([#56](https://github.com/airlock-hq/airlock/issues/56)) ([aa1827e](https://github.com/airlock-hq/airlock/commit/aa1827eb6b6e47d6e14a51ad17cf0fabc89dec89))

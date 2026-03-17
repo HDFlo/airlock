@@ -1071,7 +1071,7 @@ or run 'airlock --help' for CLI commands.
 - More official stages (AI code review, tour generation)
 - Tour sharing (hosted)
 - Team features
-- GitLab/Bitbucket support
+- Azure DevOps support
 
 ---
 

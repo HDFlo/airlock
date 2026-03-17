@@ -757,7 +757,7 @@ storage:
 | Team dashboard           | P2       |
 | Shared configurations    | P2       |
 | Tour library             | P3       |
-| GitLab/Bitbucket support | P2       |
+| Azure DevOps support     | P2       |
 
 ---
 
