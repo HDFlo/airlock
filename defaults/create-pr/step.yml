@@ -73,7 +73,6 @@ run: |
   3. **Inspect artifacts** - Look for existing artifacts to see useful information that can be put in PR title/description
 
   4. **Create the PR/MR** - Use the appropriate CLI or API to create the pull/merge request
-     - For Bitbucket Cloud, prefer bb CLI when authenticated; otherwise use API credentials from environment.
 
   5. **Return the result** - Provide the PR/MR URL if successful, or explain the error
 
