@@ -60,12 +60,6 @@ run: |
   **Branch:** $BRANCH
   **Artifacts:** $AIRLOCK_ARTIFACTS
 
-  ## Authentication Methods Available
-
-  - GitHub: gh CLI is installed and authenticated
-  - GitLab: glab CLI is installed and authenticated
-  - Bitbucket Cloud: bb CLI (gildas/bb) profile is configured
-
   ## Your Task
 
   1. **Identify the platform** - Based on the upstream URL, determine the Git hosting platform:

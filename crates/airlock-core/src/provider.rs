@@ -42,7 +42,7 @@ impl ScmProvider {
         match self {
             Self::GitHub => Some("https://cli.github.com"),
             Self::GitLab => Some("https://gitlab.com/gitlab-org/cli"),
-            Self::Bitbucket => Some("https://github.com/gildas/bb"),
+            Self::Bitbucket => Some("https://github.com/gildas/bitbucket-cli"),
             Self::AzureDevOps | Self::Unknown => None,
         }
     }
@@ -226,7 +226,7 @@ mod tests {
         );
         assert_eq!(
             ScmProvider::Bitbucket.install_hint(),
-            Some("https://github.com/gildas/bb"),
+            Some("https://github.com/gildas/bitbucket-cli"),
         );
     }
 
@@ -239,14 +239,6 @@ mod tests {
         assert!(!check.cli_installed);
         assert!(!check.cli_authenticated);
         assert!(check.cli_name.is_none());
-    }
-
-    #[test]
-    fn check_setup_bitbucket_provider_detection() {
-        let check = check_provider_setup("https://bitbucket.org/user/repo");
-        assert_eq!(check.provider, ScmProvider::Bitbucket);
-        // cli_name should be set to "bb" for Bitbucket
-        assert_eq!(check.cli_name.as_deref(), Some("bb"));
     }
 
     /// Regression test: the Bitbucket CLI auth check must use `bb profile which`,

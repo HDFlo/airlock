@@ -131,7 +131,7 @@ fn print_provider_check(check: &ProviderCheck) {
                     ScmProvider::GitLab => "glab auth login",
                     // bb CLI (gildas/bb): `bb profile create` is the equivalent of
                     // `gh auth login` — it stores credentials for future commands.
-                    // See https://github.com/gildas/bb for full options.
+                    // See https://github.com/gildas/bitbucket-cli for full options.
                     ScmProvider::Bitbucket => "bb profile create",
                     // AzureDevOps and Unknown are handled above and never reach here.
                     _ => unreachable!(
@@ -144,7 +144,7 @@ fn print_provider_check(check: &ProviderCheck) {
                 println!("    Run `{}` to set one up.", auth_cmd);
                 if check.provider == ScmProvider::Bitbucket {
                     println!(
-                        "    See https://github.com/gildas/bb for all authentication options."
+                        "    See https://github.com/gildas/bitbucket-cli for all authentication options."
                     );
                 }
             } else {
