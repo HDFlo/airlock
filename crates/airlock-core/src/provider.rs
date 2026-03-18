@@ -32,7 +32,8 @@ impl ScmProvider {
         match self {
             Self::GitHub => Some("gh"),
             Self::GitLab => Some("glab"),
-            Self::Bitbucket | Self::AzureDevOps | Self::Unknown => None,
+            Self::Bitbucket => Some("bb"),
+            Self::AzureDevOps | Self::Unknown => None,
         }
     }
 
@@ -41,7 +42,8 @@ impl ScmProvider {
         match self {
             Self::GitHub => Some("https://cli.github.com"),
             Self::GitLab => Some("https://gitlab.com/gitlab-org/cli"),
-            Self::Bitbucket | Self::AzureDevOps | Self::Unknown => None,
+            Self::Bitbucket => Some("https://github.com/gildas/bitbucket-cli"),
+            Self::AzureDevOps | Self::Unknown => None,
         }
     }
 }
@@ -97,6 +99,11 @@ fn check_cli_authenticated(provider: &ScmProvider) -> bool {
     let (cmd, args) = match provider {
         ScmProvider::GitHub => ("gh", vec!["auth", "status"]),
         ScmProvider::GitLab => ("glab", vec!["auth", "status"]),
+        // bb CLI (gildas/bb): `bb profile which` returns the current default profile
+        // name and exits non-zero when no profile has been configured. This is a
+        // local-only check (no API call) that simply confirms at least one profile
+        // is set up — equivalent to `gh auth status` / `glab auth status`.
+        ScmProvider::Bitbucket => ("bb", vec!["profile", "which"]),
         _ => return false,
     };
 
@@ -202,7 +209,7 @@ mod tests {
     fn cli_tools() {
         assert_eq!(ScmProvider::GitHub.cli_tool(), Some("gh"));
         assert_eq!(ScmProvider::GitLab.cli_tool(), Some("glab"));
-        assert_eq!(ScmProvider::Bitbucket.cli_tool(), None);
+        assert_eq!(ScmProvider::Bitbucket.cli_tool(), Some("bb"));
         assert_eq!(ScmProvider::AzureDevOps.cli_tool(), None);
         assert_eq!(ScmProvider::Unknown.cli_tool(), None);
     }
@@ -217,7 +224,10 @@ mod tests {
             ScmProvider::GitLab.install_hint(),
             Some("https://gitlab.com/gitlab-org/cli"),
         );
-        assert_eq!(ScmProvider::Bitbucket.install_hint(), None);
+        assert_eq!(
+            ScmProvider::Bitbucket.install_hint(),
+            Some("https://github.com/gildas/bitbucket-cli"),
+        );
     }
 
     // --- check_provider_setup ---
@@ -226,15 +236,6 @@ mod tests {
     fn check_setup_unknown_provider() {
         let check = check_provider_setup("https://sr.ht/~user/repo");
         assert_eq!(check.provider, ScmProvider::Unknown);
-        assert!(!check.cli_installed);
-        assert!(!check.cli_authenticated);
-        assert!(check.cli_name.is_none());
-    }
-
-    #[test]
-    fn check_setup_bitbucket_no_cli() {
-        let check = check_provider_setup("https://bitbucket.org/user/repo");
-        assert_eq!(check.provider, ScmProvider::Bitbucket);
         assert!(!check.cli_installed);
         assert!(!check.cli_authenticated);
         assert!(check.cli_name.is_none());
