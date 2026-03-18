@@ -42,7 +42,7 @@ impl ScmProvider {
         match self {
             Self::GitHub => Some("https://cli.github.com"),
             Self::GitLab => Some("https://gitlab.com/gitlab-org/cli"),
-            Self::Bitbucket => Some(" https://github.com/gildas/bitbucket-cli"),
+            Self::Bitbucket => Some("https://github.com/gildas/bitbucket-cli"),
             Self::AzureDevOps | Self::Unknown => None,
         }
     }
@@ -240,5 +240,4 @@ mod tests {
         assert!(!check.cli_authenticated);
         assert!(check.cli_name.is_none());
     }
-
 }
