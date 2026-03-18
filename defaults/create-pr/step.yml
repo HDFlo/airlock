@@ -37,12 +37,12 @@ run: |
     # `bb profile which` checks if a default profile is configured (local-only,
     # no API call) — equivalent to `gh auth status` / `glab auth status`.
     if ! command -v bb &>/dev/null; then
-      echo "Skipping: 'bb' CLI is not installed. Install it from https://github.com/gildas/bb"
+      echo "Skipping: 'bb' CLI is not installed. Install it from https://github.com/gildas/bitbucket-cli"
       exit 0
     fi
     if ! bb profile which &>/dev/null 2>&1; then
       echo "Skipping: no bb profile is configured. Run 'bb profile create' to set one up."
-      echo "See https://github.com/gildas/bb for authentication options."
+      echo "See  https://github.com/gildas/bitbucket-cli for authentication options."
       exit 0
     fi
     echo "Bitbucket auth: bb profile is configured"
