@@ -7,6 +7,7 @@ permissions:
   contents: write
   pull-requests: write
   id-token: write
+  issues: write
 
 name: release-please
 
@@ -221,3 +222,60 @@ jobs:
           git add Casks/airlock.rb
           git commit -m "airlock ${VERSION}"
           git push
+
+  notify-issues:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.airlock-release-created == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment on resolved issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release-please.outputs.airlock-tag-name }}
+          VERSION: ${{ needs.release-please.outputs.airlock-version }}
+        run: |
+          # Get the previous tag
+          prev_tag=$(gh api repos/${{ github.repository }}/releases \
+            --jq "[.[] | select(.tag_name != \"${TAG_NAME}\")] | first | .tag_name")
+
+          if [ -z "$prev_tag" ]; then
+            echo "No previous release found, skipping"
+            exit 0
+          fi
+
+          echo "Finding PRs between ${prev_tag} and ${TAG_NAME}"
+
+          # Use compare API — excludes base tag's commits (unlike commits?since= which is inclusive)
+          # Note: capped at 250 commits, but sufficient for typical release cadences
+          commits=$(gh api repos/${{ github.repository }}/compare/${prev_tag}...${TAG_NAME} \
+            --jq '.commits[].sha')
+
+          # Collect unique PR numbers across all commits (avoids duplicate queries per PR)
+          declare -A seen_prs
+          for sha in $commits; do
+            prs=$(gh api repos/${{ github.repository }}/commits/${sha}/pulls \
+              --jq '.[].number' 2>/dev/null || true)
+            for pr in $prs; do
+              seen_prs[$pr]=1
+            done
+          done
+
+          # For each unique PR, find linked issues via body regex and comment
+          declare -A seen_issues
+          for pr in "${!seen_prs[@]}"; do
+            # Check the PR body for "Fixes #N" / "Closes #N" patterns (same-repo only, excludes org/repo#N)
+            issues=$(gh api repos/${{ github.repository }}/pulls/${pr} \
+              --jq '.body' 2>/dev/null \
+              | grep -oiE '(fix(es|ed)?|close[sd]?|resolve[sd]?)\s+#[0-9]+' \
+              | grep -oE '[0-9]+' || true)
+
+            for issue in $issues; do
+              if [ -z "${seen_issues[$issue]+x}" ]; then
+                seen_issues[$issue]=1
+                echo "Commenting on issue #${issue}"
+                gh issue comment "$issue" \
+                  --repo ${{ github.repository }} \
+                  --body "This issue has been addressed in [v${VERSION}](https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}). :tada:"
+              fi
+            done
+          done
