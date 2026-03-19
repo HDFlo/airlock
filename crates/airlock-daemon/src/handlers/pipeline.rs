@@ -608,6 +608,11 @@ pub(super) async fn skip_job(
         job_key: job_key.to_string(),
         status: "skipped".to_string(),
     });
+    ctx.emit(AirlockEvent::RunUpdated {
+        repo_id: run.repo_id.clone(),
+        run_id: run.id.clone(),
+        status: "updated".to_string(),
+    });
 
     job_statuses.insert(job_key.to_string(), JobStatus::Skipped);
 }
@@ -639,6 +644,11 @@ pub(super) async fn fail_job_worktree(
         run_id: run.id.clone(),
         job_key: job_key.to_string(),
         status: "failed".to_string(),
+    });
+    ctx.emit(AirlockEvent::RunUpdated {
+        repo_id: run.repo_id.clone(),
+        run_id: run.id.clone(),
+        status: "updated".to_string(),
     });
 
     job_statuses.insert(job_key.to_string(), JobStatus::Failed);
@@ -757,7 +767,10 @@ pub(super) async fn execute_step_sequence(
         // Resolve reusable action
         let mut resolved_step = if step.is_reusable() {
             debug!("Resolving reusable action: {:?}", step.uses);
-            match stage_loader.resolve_stage(step).await {
+            match stage_loader
+                .resolve_stage(step, Some(params.worktree_path))
+                .await
+            {
                 Ok(resolved) => resolved,
                 Err(e) => {
                     error!(
@@ -1053,6 +1066,11 @@ pub(super) async fn execute_single_job(
         run_id: run.id.clone(),
         job_key: job_key.to_string(),
     });
+    ctx.emit(AirlockEvent::RunUpdated {
+        repo_id: run.repo_id.clone(),
+        run_id: run.id.clone(),
+        status: "updated".to_string(),
+    });
 
     // Ensure worktree exists
     if !worktree_path.exists() {
@@ -1073,6 +1091,11 @@ pub(super) async fn execute_single_job(
                 run_id: run.id.clone(),
                 job_key: job_key.to_string(),
                 status: "failed".to_string(),
+            });
+            ctx.emit(AirlockEvent::RunUpdated {
+                repo_id: run.repo_id.clone(),
+                run_id: run.id.clone(),
+                status: "updated".to_string(),
             });
             return JobStatus::Failed;
         }
@@ -1164,6 +1187,11 @@ pub(super) async fn execute_single_job(
         run_id: run.id.clone(),
         job_key: job_key.to_string(),
         status: status_str.to_string(),
+    });
+    ctx.emit(AirlockEvent::RunUpdated {
+        repo_id: run.repo_id.clone(),
+        run_id: run.id.clone(),
+        status: "updated".to_string(),
     });
 
     info!("Job '{}' completed with status: {}", job_key, status_str);
@@ -1829,6 +1857,8 @@ mod tests {
             continue_on_error: false,
             require_approval: ApprovalMode::Never,
             timeout: Some(10),
+            model: None,
+            adapter: None,
             apply_patch: false,
         };
 

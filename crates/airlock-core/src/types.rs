@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-// =============================================================================
-// Approval Mode
-// =============================================================================
+// --- Approval Mode ---
 
 /// Controls when a step pauses for user approval.
 ///
@@ -68,9 +66,7 @@ impl<'de> Deserialize<'de> for ApprovalMode {
     }
 }
 
-// =============================================================================
-// Step-Based Pipeline Types
-// =============================================================================
+// --- Step-Based Pipeline Types ---
 
 /// Status of a pipeline step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -173,6 +169,16 @@ pub struct StepDefinition {
     /// When omitted, the executor applies a default timeout (60 minutes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<u64>,
+
+    /// Model override for agent steps. When set, this is passed to the agent
+    /// adapter via `AIRLOCK_AGENT_MODEL` environment variable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+
+    /// Agent adapter override for agent steps (e.g., "claude-code", "codex").
+    /// When set, this is passed via `AIRLOCK_AGENT_ADAPTER` environment variable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<String>,
 
     /// Auto-apply pending patches after this step passes.
     /// When `true`, the executor applies all patches from `$AIRLOCK_ARTIFACTS/patches/`
@@ -534,9 +540,7 @@ impl Run {
     }
 }
 
-// =============================================================================
-// Legacy Intent Types (To be removed in Steps 10.13-10.16)
-// =============================================================================
+// --- Legacy Intent Types (To be removed in Steps 10.13-10.16) ---
 
 /// Category of an intent.
 ///
@@ -863,9 +867,7 @@ pub struct TourResult {
     pub generated_at: i64,
 }
 
-// =============================================================================
-// Sync Types
-// =============================================================================
+// --- Sync Types ---
 
 /// A record of an upstream sync operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -886,9 +888,7 @@ pub struct SyncLog {
     pub synced_at: i64,
 }
 
-// =============================================================================
-// Diff Analysis Types
-// =============================================================================
+// --- Diff Analysis Types ---
 
 /// Status of a file in the diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -945,9 +945,7 @@ pub struct FileChange {
     pub hunks: Vec<DiffHunk>,
 }
 
-// =============================================================================
-// Clean Stage Types
-// =============================================================================
+// --- Clean Stage Types ---
 
 /// Result of the clean stage.
 #[derive(Debug, Clone, Serialize, Deserialize)]

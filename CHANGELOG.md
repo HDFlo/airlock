@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.1.72](https://github.com/airlock-hq/airlock/compare/airlock-v0.1.71...airlock-v0.1.72) (2026-03-19)
+
+
+### Features
+
+* per-step model and adapter config ([#90](https://github.com/airlock-hq/airlock/issues/90)) ([e0dafdf](https://github.com/airlock-hq/airlock/commit/e0dafdf5cf3fc13b6398b7f492f94324a957908e))
+
+## [0.1.71](https://github.com/airlock-hq/airlock/compare/airlock-v0.1.70...airlock-v0.1.71) (2026-03-19)
+
+
+### Bug Fixes
+
+* **app:** reduce event-driven refetch storm causing desktop lag ([#88](https://github.com/airlock-hq/airlock/issues/88)) ([88be8ac](https://github.com/airlock-hq/airlock/commit/88be8acba97a517764cab790ddd3d3a76b11c6ef))
+
+## [0.1.70](https://github.com/airlock-hq/airlock/compare/airlock-v0.1.69...airlock-v0.1.70) (2026-03-19)
+
+
+### Features
+
+* local file refs in `uses` ([#86](https://github.com/airlock-hq/airlock/issues/86)) ([8377191](https://github.com/airlock-hq/airlock/commit/83771910304a678598b45221b5de58184c5a0ef8))
+
+## [0.1.69](https://github.com/airlock-hq/airlock/compare/airlock-v0.1.68...airlock-v0.1.69) (2026-03-19)
+
+
+### Features
+
+* **daemon:** add retry_job IPC method for retrying failed/skipped jobs ([#83](https://github.com/airlock-hq/airlock/issues/83)) ([#84](https://github.com/airlock-hq/airlock/issues/84)) ([507c9c8](https://github.com/airlock-hq/airlock/commit/507c9c82cc529b5c95c769f4dd4ae7154350ba47))
+
 ## [0.1.68](https://github.com/airlock-hq/airlock/compare/airlock-v0.1.67...airlock-v0.1.68) (2026-03-18)
 
 

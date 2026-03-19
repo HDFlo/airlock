@@ -346,11 +346,16 @@ This design means stages don't need to know which phase they're in — they just
 
 ### 5.4 Reusable Steps
 
-Steps can be loaded from public Git repositories using the `uses:` syntax:
+Steps can be loaded from public Git repositories or local directories using the `uses:` syntax:
 
 ```yaml
+# From a Git repository
 - name: describe
   uses: airlock-hq/airlock/defaults/describe@v1
+
+# From a local directory (relative to repo root)
+- name: custom-lint
+  uses: ./my-steps/lint
 ```
 
 Properties from `step.yml` can be overridden inline:
@@ -394,6 +399,8 @@ run: | # Command to execute
   set -euo pipefail
   echo "hello"
 shell: bash # Optional: sh, bash, zsh
+model: haiku # Optional: agent model override (sets AIRLOCK_AGENT_MODEL)
+adapter: claude-code # Optional: agent adapter override (sets AIRLOCK_AGENT_ADAPTER)
 description: Generate PR description via AI agent
 ```
 
